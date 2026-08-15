@@ -1,0 +1,845 @@
+use chrono::Utc;
+use rusqlite::{Connection, OptionalExtension, params};
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::path::Path;
+use thiserror::Error;
+
+use crate::evidence::VerifiedEvidence;
+use crate::model::{
+    Debate, DebateState, DecisionRecord, ProviderConfig, ProviderKind, ProviderPosition,
+    ServingIdentityStatus, TurnState,
+};
+use crate::packet::WrittenPacket;
+use crate::providers::ProviderCallResult;
+use crate::snapshot::SnapshotManifest;
+use crate::state::{DebateEvent, DebateStateMachine};
+
+#[derive(Debug, Error)]
+pub enum DatabaseError {
+    #[error("sqlite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("state transition failed: {0}")]
+    Transition(#[from] crate::state::StateTransitionError),
+    #[error("debate not found: {0}")]
+    DebateNotFound(String),
+}
+
+pub struct Database {
+    connection: Connection,
+}
+
+impl Database {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
+        let connection = Connection::open(path)?;
+        let database = Self { connection };
+        database.initialize()?;
+        Ok(database)
+    }
+
+    pub fn in_memory() -> Result<Self, DatabaseError> {
+        let connection = Connection::open_in_memory()?;
+        let database = Self { connection };
+        database.initialize()?;
+        Ok(database)
+    }
+
+    pub fn initialize(&self) -> Result<(), DatabaseError> {
+        self.connection.execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            PRAGMA journal_mode = WAL;
+
+            CREATE TABLE IF NOT EXISTS debates (
+              id TEXT PRIMARY KEY,
+              state TEXT NOT NULL,
+              intake_json TEXT NOT NULL,
+              council_size INTEGER NOT NULL,
+              provider_models_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS providers (
+              slug TEXT PRIMARY KEY,
+              config_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS provider_certifications (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              provider_slug TEXT NOT NULL,
+              status TEXT NOT NULL,
+              evidence TEXT,
+              observed_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS turns (
+              id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              round INTEGER NOT NULL,
+              provider_slug TEXT NOT NULL,
+              state TEXT NOT NULL,
+              packet_hash TEXT,
+              requested_model TEXT NOT NULL,
+              reported_served_model TEXT,
+              serving_identity_status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS attempts (
+              id TEXT PRIMARY KEY,
+              turn_id TEXT NOT NULL REFERENCES turns(id),
+              attempt_number INTEGER NOT NULL,
+              state TEXT NOT NULL,
+              failure_type TEXT,
+              exit_code INTEGER,
+              wall_ms INTEGER,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS positions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              turn_id TEXT NOT NULL REFERENCES turns(id),
+              position_json TEXT NOT NULL,
+              accepted INTEGER NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS claims (
+              id TEXT PRIMARY KEY,
+              position_id INTEGER NOT NULL REFERENCES positions(id),
+              text TEXT NOT NULL,
+              evidence_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS claim_relations (
+              id TEXT PRIMARY KEY,
+              source_claim_id TEXT NOT NULL,
+              target_claim_id TEXT,
+              relation TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              evidence_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS evidence (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              file TEXT NOT NULL,
+              requested_range TEXT NOT NULL,
+              resolved_range TEXT,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              verdict TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS snapshots (
+              id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              root TEXT NOT NULL,
+              manifest_json TEXT NOT NULL,
+              manifest_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS snapshot_files (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
+              relative_path TEXT NOT NULL,
+              size INTEGER NOT NULL,
+              sha256 TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS snapshot_exclusions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
+              relative_path TEXT NOT NULL,
+              reason TEXT NOT NULL,
+              detail TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS context_packets (
+              packet_id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              turn_id TEXT NOT NULL,
+              provider_slug TEXT NOT NULL,
+              path TEXT NOT NULL,
+              sha256 TEXT NOT NULL,
+              bytes INTEGER NOT NULL,
+              schema_version TEXT NOT NULL,
+              skills_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS raw_artifacts (
+              id TEXT PRIMARY KEY,
+              turn_id TEXT NOT NULL REFERENCES turns(id),
+              stdout TEXT NOT NULL,
+              stderr TEXT NOT NULL,
+              exit_code INTEGER,
+              wall_ms INTEGER,
+              requested_model TEXT NOT NULL,
+              packet_hash TEXT,
+              schema_hash TEXT,
+              failure_type TEXT,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS decisions (
+              debate_id TEXT PRIMARY KEY REFERENCES debates(id),
+              decision_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS exports (
+              id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              kind TEXT NOT NULL,
+              path TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS safety_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              debate_id TEXT,
+              event_type TEXT NOT NULL,
+              detail TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS preflight_results (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              debate_id TEXT,
+              provider_slug TEXT NOT NULL,
+              status TEXT NOT NULL,
+              detail TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS audit_events (
+              sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+              debate_id TEXT,
+              action TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              previous_hash TEXT,
+              event_hash TEXT NOT NULL UNIQUE,
+              created_at TEXT NOT NULL
+            );
+            CREATE TRIGGER IF NOT EXISTS audit_events_no_update
+              BEFORE UPDATE ON audit_events
+              BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
+              BEFORE DELETE ON audit_events
+              BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
+            "#,
+        )?;
+        let _ = self.connection.execute(
+            "ALTER TABLE debates ADD COLUMN provider_models_json TEXT NOT NULL DEFAULT '{}'",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE context_packets ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+        Ok(())
+    }
+
+    pub fn create_debate(&self, debate: &Debate) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO debates (id, state, intake_json, council_size, provider_models_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                debate.id,
+                serde_json::to_string(&debate.state)?,
+                serde_json::to_string(&debate.intake)?,
+                debate.council_size,
+                serde_json::to_string(&debate.provider_models)?,
+                debate.created_at.to_rfc3339(),
+                debate.updated_at.to_rfc3339()
+            ],
+        )?;
+        self.append_audit_event(
+            Some(&debate.id),
+            "DEBATE_CREATED",
+            json!({"state": debate.state, "council_size": debate.council_size}),
+        )?;
+        Ok(())
+    }
+
+    pub fn load_debate(&self, debate_id: &str) -> Result<Debate, DatabaseError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT id, state, intake_json, council_size, provider_models_json, created_at, updated_at FROM debates WHERE id = ?1",
+                params![debate_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, u8>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| DatabaseError::DebateNotFound(debate_id.to_string()))?;
+        deserialize_debate_row(row)
+    }
+
+    pub fn list_debates(&self, limit: u32) -> Result<Vec<Debate>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, state, intake_json, council_size, provider_models_json, created_at, updated_at FROM debates ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, u8>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })?;
+        let rows = rows.collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(deserialize_debate_row).collect()
+    }
+
+    pub fn transition_debate(
+        &self,
+        debate_id: &str,
+        event: DebateEvent,
+    ) -> Result<DebateState, DatabaseError> {
+        let state_text: String = self
+            .connection
+            .query_row(
+                "SELECT state FROM debates WHERE id = ?1",
+                params![debate_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| DatabaseError::DebateNotFound(debate_id.to_string()))?;
+        let current: DebateState = serde_json::from_str(&state_text)?;
+        let mut machine = DebateStateMachine::new(current);
+        let next = machine.transition(event.clone())?;
+        self.connection.execute(
+            "UPDATE debates SET state = ?1, updated_at = ?2 WHERE id = ?3",
+            params![
+                serde_json::to_string(&next)?,
+                Utc::now().to_rfc3339(),
+                debate_id
+            ],
+        )?;
+        self.append_audit_event(
+            Some(debate_id),
+            "STATE_TRANSITION",
+            json!({"event": format!("{event:?}"), "state": next}),
+        )?;
+        Ok(next)
+    }
+
+    pub fn update_turn_state(&self, turn_id: &str, state: TurnState) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "UPDATE turns SET state = ?1, updated_at = ?2 WHERE id = ?3",
+            params![
+                serde_json::to_string(&state)?,
+                Utc::now().to_rfc3339(),
+                turn_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_provider_position(
+        &self,
+        position: &ProviderPosition,
+    ) -> Result<i64, DatabaseError> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let position_json = serde_json::to_string(&position.position)?;
+        transaction.execute(
+            "INSERT INTO positions (turn_id, position_json, accepted, created_at) VALUES (?1, ?2, 1, ?3)",
+            params![position.turn_id, position_json, Utc::now().to_rfc3339()],
+        )?;
+        let position_id = transaction.last_insert_rowid();
+        for claim in &position.position.claims {
+            transaction.execute(
+                "INSERT INTO claims (id, position_id, text, evidence_json) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    claim.id,
+                    position_id,
+                    claim.text,
+                    serde_json::to_string(&claim.evidence)?
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(position_id)
+    }
+
+    pub fn latest_provider_positions(
+        &self,
+        debate_id: &str,
+    ) -> Result<Vec<ProviderPosition>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT t.provider_slug, t.round, t.id, t.requested_model,
+                    t.reported_served_model, t.serving_identity_status,
+                    p.id, p.position_json,
+                    COALESCE((SELECT ra.id FROM raw_artifacts ra
+                              WHERE ra.turn_id = t.id
+                              ORDER BY ra.created_at DESC LIMIT 1), '')
+             FROM positions p
+             JOIN turns t ON t.id = p.turn_id
+             WHERE t.debate_id = ?1 AND p.accepted = 1
+             ORDER BY t.round ASC, p.id ASC",
+        )?;
+        let rows = statement.query_map(params![debate_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u8>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
+            ))
+        })?;
+        let mut latest = std::collections::BTreeMap::<ProviderKind, ProviderPosition>::new();
+        for row in rows {
+            let (
+                provider_slug,
+                round,
+                turn_id,
+                requested_model,
+                reported_served_model,
+                serving_identity_status,
+                _position_id,
+                position_json,
+                raw_artifact_id,
+            ) = row?;
+            let Some(provider) = ProviderKind::from_slug(&provider_slug) else {
+                continue;
+            };
+            let candidate = ProviderPosition {
+                provider: provider.clone(),
+                round,
+                turn_id,
+                position: serde_json::from_str(&position_json)?,
+                raw_artifact_id,
+                requested_model,
+                reported_served_model,
+                serving_identity_status: serde_json::from_str(&serving_identity_status)?,
+            };
+            latest.insert(provider, candidate);
+        }
+        Ok(latest.into_values().collect())
+    }
+
+    pub fn save_provider_config(&self, config: &ProviderConfig) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO providers (slug, config_json, updated_at) VALUES (?1, ?2, ?3)",
+            params![
+                config.provider.slug(),
+                serde_json::to_string(config)?,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_preflight(
+        &self,
+        debate_id: Option<&str>,
+        provider: &ProviderConfig,
+        status: &str,
+        detail: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO preflight_results (debate_id, provider_slug, status, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                debate_id,
+                provider.provider.slug(),
+                status,
+                detail,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn create_turn(
+        &self,
+        turn_id: &str,
+        debate_id: &str,
+        round: u8,
+        provider: &ProviderConfig,
+        state: TurnState,
+        packet_hash: Option<&str>,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO turns (id, debate_id, round, provider_slug, state, packet_hash, requested_model, reported_served_model, serving_identity_status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?9)",
+            params![
+                turn_id,
+                debate_id,
+                round,
+                provider.provider.slug(),
+                serde_json::to_string(&state)?,
+                packet_hash,
+                provider.model_default,
+                serde_json::to_string(&ServingIdentityStatus::Unknown)?,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_attempt(
+        &self,
+        attempt_id: &str,
+        turn_id: &str,
+        attempt_number: u8,
+        state: TurnState,
+        failure_type: Option<&crate::model::FailureType>,
+        result: Option<&ProviderCallResult>,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO attempts (id, turn_id, attempt_number, state, failure_type, exit_code, wall_ms, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                attempt_id,
+                turn_id,
+                attempt_number,
+                serde_json::to_string(&state)?,
+                failure_type.map(serde_json::to_string).transpose()?,
+                result.and_then(|value| value.exit_code),
+                result.map(|value| value.wall_ms as i64),
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_raw_artifact(
+        &self,
+        turn_id: &str,
+        result: &ProviderCallResult,
+        packet_hash: Option<&str>,
+        schema_hash: Option<&str>,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO raw_artifacts (id, turn_id, stdout, stderr, exit_code, wall_ms, requested_model, packet_hash, schema_hash, failure_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                result.raw_artifact_id,
+                turn_id,
+                result.stdout,
+                result.stderr,
+                result.exit_code,
+                result.wall_ms as i64,
+                result.requested_model,
+                packet_hash,
+                schema_hash,
+                result.failure_type.as_ref().map(serde_json::to_string).transpose()?,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        self.connection.execute(
+            "UPDATE turns SET reported_served_model = ?1, serving_identity_status = ?2, updated_at = ?3 WHERE id = ?4",
+            params![
+                result.reported_served_model,
+                serde_json::to_string(&result.serving_identity_status)?,
+                Utc::now().to_rfc3339(),
+                turn_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_packet(&self, packet: &WrittenPacket) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO context_packets (packet_id, debate_id, turn_id, provider_slug, path, sha256, bytes, schema_version, skills_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                packet.metadata.packet_id,
+                packet.metadata.debate_id,
+                packet.metadata.turn_id,
+                packet.metadata.provider.slug(),
+                packet.path.to_string_lossy(),
+                packet.sha256,
+                packet.bytes as i64,
+                packet.metadata.schema_version,
+                serde_json::to_string(&packet.metadata.skills)?,
+                packet.metadata.created_at.to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_snapshot(
+        &self,
+        debate_id: &str,
+        root: &Path,
+        manifest: &SnapshotManifest,
+    ) -> Result<(), DatabaseError> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO snapshots (id, debate_id, root, manifest_json, manifest_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                manifest.snapshot_id,
+                debate_id,
+                root.to_string_lossy(),
+                serde_json::to_string(manifest)?,
+                manifest.manifest_sha256,
+                manifest.created_at.to_rfc3339()
+            ],
+        )?;
+        for file in &manifest.files {
+            transaction.execute(
+                "INSERT INTO snapshot_files (snapshot_id, relative_path, size, sha256) VALUES (?1, ?2, ?3, ?4)",
+                params![manifest.snapshot_id, file.relative_path, file.size as i64, file.sha256],
+            )?;
+        }
+        for exclusion in &manifest.exclusions {
+            transaction.execute(
+                "INSERT INTO snapshot_exclusions (snapshot_id, relative_path, reason, detail) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    manifest.snapshot_id,
+                    exclusion.relative_path,
+                    serde_json::to_string(&exclusion.reason)?,
+                    exclusion.detail
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn save_evidence(
+        &self,
+        debate_id: &str,
+        evidence: &VerifiedEvidence,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO evidence (debate_id, file, requested_range, resolved_range, content, content_hash, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                debate_id,
+                evidence.file,
+                evidence.requested_range,
+                evidence.resolved_range,
+                evidence.content,
+                evidence.content_hash,
+                serde_json::to_string(&evidence.verdict)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_export(
+        &self,
+        export_id: &str,
+        debate_id: &str,
+        kind: &str,
+        path: &Path,
+        content_hash: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO exports (id, debate_id, kind, path, content_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![export_id, debate_id, kind, path.to_string_lossy(), content_hash, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_safety_event(
+        &self,
+        debate_id: Option<&str>,
+        event_type: &str,
+        detail: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO safety_events (debate_id, event_type, detail, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![debate_id, event_type, detail, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_decision(&self, record: &DecisionRecord) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO decisions (debate_id, decision_json, created_at) VALUES (?1, ?2, ?3)",
+            params![
+                record.debate.id,
+                serde_json::to_string(record)?,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        self.append_audit_event(
+            Some(&record.debate.id),
+            "HUMAN_DECISION_RECORDED",
+            serde_json::to_value(&record.human_decision)?,
+        )?;
+        Ok(())
+    }
+
+    pub fn append_audit_event(
+        &self,
+        debate_id: Option<&str>,
+        action: &str,
+        payload: serde_json::Value,
+    ) -> Result<String, DatabaseError> {
+        let previous_hash: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let payload_json = serde_json::to_string(&payload)?;
+        let created_at = Utc::now().to_rfc3339();
+        let mut digest = Sha256::new();
+        digest.update(previous_hash.as_deref().unwrap_or_default().as_bytes());
+        digest.update(action.as_bytes());
+        digest.update(payload_json.as_bytes());
+        digest.update(created_at.as_bytes());
+        let event_hash = hex::encode(digest.finalize());
+        self.connection.execute(
+            "INSERT INTO audit_events (debate_id, action, payload_json, previous_hash, event_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![debate_id, action, payload_json, previous_hash, event_hash, created_at],
+        )?;
+        Ok(event_hash)
+    }
+
+    pub fn audit_hashes(&self) -> Result<Vec<String>, DatabaseError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT event_hash FROM audit_events ORDER BY sequence")?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    }
+
+    pub fn audit_count(&self) -> Result<i64, DatabaseError> {
+        Ok(self
+            .connection
+            .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))?)
+    }
+
+    pub fn audit_action_count(&self, debate_id: &str, action: &str) -> Result<i64, DatabaseError> {
+        Ok(self.connection.query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE debate_id = ?1 AND action = ?2",
+            params![debate_id, action],
+            |row| row.get(0),
+        )?)
+    }
+}
+
+fn deserialize_debate_row(
+    row: (String, String, String, u8, String, String, String),
+) -> Result<Debate, DatabaseError> {
+    Ok(Debate {
+        id: row.0,
+        state: serde_json::from_str(&row.1)?,
+        intake: serde_json::from_str(&row.2)?,
+        council_size: row.3,
+        provider_models: serde_json::from_str(&row.4)?,
+        created_at: chrono::DateTime::parse_from_rfc3339(&row.5)
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?
+            .with_timezone(&Utc),
+        updated_at: chrono::DateTime::parse_from_rfc3339(&row.6)
+            .map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?
+            .with_timezone(&Utc),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        Claim, Commitment, Debate, Intake, ModelSelection, Position, ProviderKind, Reversibility,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn audit_log_is_hash_chained_and_append_only() {
+        let database = Database::in_memory().unwrap();
+        let mut models = BTreeMap::new();
+        models.insert(
+            ProviderKind::CodexWsl,
+            ModelSelection::requested("gpt-5.6-luna"),
+        );
+        let debate = Debate::new(Intake::default(), models);
+        database.create_debate(&debate).unwrap();
+        database
+            .append_audit_event(Some(&debate.id), "TEST", json!({"ok": true}))
+            .unwrap();
+        let loaded = database.load_debate(&debate.id).unwrap();
+        assert_eq!(loaded.provider_models, debate.provider_models);
+        assert_eq!(database.list_debates(10).unwrap().len(), 1);
+        assert_eq!(database.audit_count().unwrap(), 2);
+        assert_eq!(database.audit_hashes().unwrap().len(), 2);
+        let error = database
+            .connection
+            .execute("DELETE FROM audit_events WHERE sequence = 1", []);
+        assert!(error.is_err());
+    }
+
+    #[test]
+    fn latest_positions_round_trip_from_turn_storage() {
+        let database = Database::in_memory().unwrap();
+        let models = BTreeMap::from([(
+            ProviderKind::CodexWsl,
+            ModelSelection::requested("gpt-5.6-luna"),
+        )]);
+        let debate = Debate::new(Intake::default(), models);
+        database.create_debate(&debate).unwrap();
+        let config = ProviderConfig::defaults()
+            .into_iter()
+            .find(|config| config.provider == ProviderKind::CodexWsl)
+            .unwrap();
+        let turn_id = "turn-round-trip";
+        database
+            .create_turn(
+                turn_id,
+                &debate.id,
+                3,
+                &config,
+                TurnState::Valid,
+                Some("packet-hash"),
+            )
+            .unwrap();
+        let position = ProviderPosition {
+            provider: ProviderKind::CodexWsl,
+            round: 3,
+            turn_id: turn_id.to_string(),
+            position: Position {
+                schema_version: crate::POSITION_SCHEMA_VERSION.to_string(),
+                recommendation: "Keep the reversible local path".to_string(),
+                commitment: Commitment::WouldStake,
+                claims: vec![Claim {
+                    id: "claim-1".to_string(),
+                    text: "It keeps the first release small".to_string(),
+                    evidence: vec!["packet.md:1-2".to_string()],
+                }],
+                risks: vec!["A later scale trigger may require migration".to_string()],
+                assumptions: Vec::new(),
+                alternatives: Vec::new(),
+                flip_condition: "Measured scale exceeds the local boundary".to_string(),
+                cost_if_wrong: "A contained migration consumes one sprint".to_string(),
+                when_wrongness_becomes_visible: None,
+                reversibility: Reversibility::Easy,
+                strongest_argument_against_my_recommendation: String::new(),
+                what_my_recommendation_is_bad_at: String::new(),
+                acceptance_criteria: Vec::new(),
+                implementation_constraints: Vec::new(),
+            },
+            raw_artifact_id: "raw-1".to_string(),
+            requested_model: "gpt-5.6-luna".to_string(),
+            reported_served_model: None,
+            serving_identity_status: ServingIdentityStatus::ProviderDoesNotReport,
+        };
+        database.save_provider_position(&position).unwrap();
+        let loaded = database.latest_provider_positions(&debate.id).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            loaded[0].position.recommendation,
+            position.position.recommendation
+        );
+        assert_eq!(loaded[0].round, 3);
+    }
+}

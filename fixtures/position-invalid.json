@@ -1,0 +1,10 @@
+{
+  "schema_version": "wrong",
+  "recommendation": "N/A",
+  "commitment": "WOULD_STAKE",
+  "claims": [],
+  "risks": [],
+  "flip_condition": "",
+  "cost_if_wrong": "",
+  "reversibility": "EASY"
+}

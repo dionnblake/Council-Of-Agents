@@ -1,0 +1,10 @@
+[package]
+name = "council-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+council-core = { path = "../council-core" }
+serde_json.workspace = true

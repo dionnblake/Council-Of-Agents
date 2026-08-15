@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://council-of-agents.local/schemas/output-position.v1.json",
+  "title": "Council output position v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recommendation",
+    "commitment",
+    "claims",
+    "risks",
+    "flip_condition",
+    "cost_if_wrong",
+    "reversibility"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "output-position.v1"
+    },
+    "recommendation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commitment": {
+      "type": "string",
+      "enum": [
+        "WOULD_STAKE",
+        "CONDITIONAL",
+        "WOULD_NOT_STAKE"
+      ]
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^[^:]+:[0-9]+-[0-9]+$"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[^:]+:[0-9]+-[0-9]+$"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "flip_condition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cost_if_wrong": {
+      "type": "string",
+      "minLength": 1
+    },
+    "when_wrongness_becomes_visible": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reversibility": {
+      "type": "string",
+      "enum": [
+        "EASY",
+        "COSTLY",
+        "ONE_WAY_DOOR"
+      ]
+    },
+    "strongest_argument_against_my_recommendation": {
+      "type": "string"
+    },
+    "what_my_recommendation_is_bad_at": {
+      "type": "string"
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "implementation_constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
+

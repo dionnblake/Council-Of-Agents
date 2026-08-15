@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "council/stateless-handoff.v1",
+  "title": "Council Stateless Handoff v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "prior_recommendation",
+    "prior_commitment",
+    "understood_peer_challenge",
+    "response_to_peer",
+    "position_action",
+    "evidence"
+  ],
+  "properties": {
+    "prior_recommendation": { "type": "string", "minLength": 1 },
+    "prior_commitment": { "enum": ["WOULD_STAKE", "CONDITIONAL", "WOULD_NOT_STAKE"] },
+    "understood_peer_challenge": { "type": "string", "minLength": 1 },
+    "response_to_peer": { "type": "string", "minLength": 1 },
+    "position_action": { "enum": ["PRESERVE", "REVISE"] },
+    "revision_reason": { "type": ["string", "null"] },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^.+:[1-9][0-9]*-[1-9][0-9]*$"
+      }
+    }
+  }
+}

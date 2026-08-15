@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "council/intake.v1",
+  "title": "Council Intake v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "question",
+    "mode",
+    "options",
+    "product_type",
+    "decision_type",
+    "hard_constraints",
+    "priority"
+  ],
+  "properties": {
+    "question": { "type": "string", "minLength": 12 },
+    "mode": { "enum": ["COMPARE", "DISCOVERY"] },
+    "options": { "type": "array", "items": { "type": "string" } },
+    "product_type": {
+      "enum": ["WEB", "ANDROID", "WINDOWS", "GAME", "BACKEND", "AI_SYSTEM", "DESKTOP", "OTHER"]
+    },
+    "decision_type": {
+      "enum": ["ARCHITECTURE", "STACK", "DESIGN", "SECURITY", "PERFORMANCE", "DATABASE", "DEPENDENCY", "TESTING", "GENERAL"]
+    },
+    "hard_constraints": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "priority": { "type": "string", "minLength": 1 },
+    "current_leaning": { "type": ["string", "null"] },
+    "current_leaning_reason": { "type": ["string", "null"] },
+    "repository": { "type": ["string", "null"] }
+  }
+}

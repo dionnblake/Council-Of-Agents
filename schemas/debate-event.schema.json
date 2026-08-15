@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "council/debate-event.v1",
+  "title": "Council Debate Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event", "debate_id", "created_at"],
+  "properties": {
+    "event": {
+      "enum": [
+        "PREFLIGHT_PASSED",
+        "SNAPSHOT_STARTED",
+        "SNAPSHOT_READY",
+        "OPENING_STARTED",
+        "OPENING_COMPLETE",
+        "CROSS_EXAMINATION_STARTED",
+        "CROSS_EXAMINATION_COMPLETE",
+        "FINAL_POSITIONS_STARTED",
+        "FINAL_POSITIONS_COMPLETE",
+        "TARGETED_ROUND_REQUESTED",
+        "HUMAN_DECISION_RECORDED",
+        "COMPILE",
+        "EXPORT",
+        "PAUSE",
+        "RESUME",
+        "CANCEL",
+        "FAIL",
+        "SAFETY_ABORT"
+      ]
+    },
+    "debate_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

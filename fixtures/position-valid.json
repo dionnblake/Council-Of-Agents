@@ -1,0 +1,16 @@
+{
+  "schema_version": "output-position.v1",
+  "recommendation": "Choose the reversible local path for the first release.",
+  "commitment": "WOULD_STAKE",
+  "claims": [
+    {
+      "id": "provider-owned",
+      "text": "The local path minimizes operational dependency during discovery.",
+      "evidence": ["README.md:1-3"]
+    }
+  ],
+  "risks": ["A later scale requirement may require migration."],
+  "flip_condition": "Measured usage exceeds the local boundary before the next commitment.",
+  "cost_if_wrong": "A contained migration would consume one planned sprint.",
+  "reversibility": "EASY"
+}

@@ -1,0 +1,17 @@
+[package]
+name = "council-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+ico = "0.5"
+png = "0.17"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+council-core = { path = "../../crates/council-core" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "council/decision-record.v1",
+  "title": "Council Decision Record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "debate",
+    "final_positions",
+    "agreements",
+    "disagreements",
+    "minority_positions",
+    "verified_evidence",
+    "unverified_evidence",
+    "risks",
+    "acceptance_criteria",
+    "human_decision"
+  ],
+  "properties": {
+    "debate": { "type": "object" },
+    "final_positions": { "type": "array", "items": { "type": "object" } },
+    "agreements": { "type": "array", "items": { "type": "string" } },
+    "disagreements": { "type": "array", "items": { "type": "string" } },
+    "most_decision_relevant_dispute": { "type": ["string", "null"] },
+    "minority_positions": { "type": "array", "items": { "type": "string" } },
+    "verified_evidence": { "type": "array", "items": { "type": "string" } },
+    "unverified_evidence": { "type": "array", "items": { "type": "string" } },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "acceptance_criteria": { "type": "array", "items": { "type": "string" } },
+    "human_decision": { "type": "object" }
+  }
+}
