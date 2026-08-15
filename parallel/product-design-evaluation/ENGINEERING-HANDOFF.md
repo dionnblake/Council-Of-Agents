@@ -18,6 +18,9 @@ This handoff is for the primary engineering agent. It does not modify production
 - Do not expose provider-send, implement, run, or open-another-harness controls in the master-prompt flow.
 - Make deterministic output reproducible from the same approved state.
 - Apply the safety acceptance controls: snapshot isolation, reparse-point rejection, secret scan, config stripping, read-only evidence, WSL boundary, scratch separation, and process cancellation.
+- Use the threat model and prompt-injection corpus as adversarial inputs; repository/provider text cannot alter Council rules or trigger tools.
+- Implement the provider failure matrix as the controller/UI contract, including unknown failure, partial round, explicit degraded mode, and audit fields.
+- Keep the human-copy stop boundary enforced by the master-prompt compiler and UI.
 
 ## SHOULD IMPLEMENT
 
@@ -51,6 +54,9 @@ This handoff is for the primary engineering agent. It does not modify production
 - Retain evidence for every automated and human-reviewed result. Treat missing evidence as unverified.
 - Include negative controls for malformed output, shifted citations, missing fields, duplicate IDs, secret/reparse inputs, hidden peer visibility, interruption, and timestamp-only export divergence.
 - Use the Acceptance Gauntlet before claiming V1 complete.
+- Render the ten mock debates without provider calls so UI and acceptance work can proceed deterministically.
+- Implement the state catalog, accessibility/keyboard contract, onboarding diagnostics, decision-record lifecycle, and release-gate evidence structure.
+- Measure application-side performance budgets without treating provider inference latency as an app SLO.
 
 ## OPEN QUESTION
 
@@ -60,6 +66,9 @@ This handoff is for the primary engineering agent. It does not modify production
 - **Discovery union:** confirm the controller's normalization and five-candidate default limit against the existing architecture.
 - **Prompt compiler schema:** align the conceptual R1/R2/R3 fields here with the production versioned schema without adding a sixth skill package.
 - **Visual validation surface:** confirm whether the existing desktop shell can expose the claim relationship board without restructuring stable IPC contracts.
+- **Performance instrumentation:** confirm where startup, list render, evidence lookup, cancellation, and snapshot progress timestamps should be collected.
+- **Decision record storage:** align the durable record/amendment fields with existing persistence without duplicating the master prompt.
+- **Release evidence:** identify the final owner and storage location for fresh-machine, packaging, accessibility, and demo evidence.
 
 ## DO NOT IMPLEMENT
 
@@ -71,6 +80,7 @@ This handoff is for the primary engineering agent. It does not modify production
 - Do not create a fake universal design score or numeric confidence percentages.
 - Do not pass the live repository, credentials, provider config, hooks, or arbitrary ambient user skill trees to a provider.
 - Do not inspect or rewrite the primary agent's incomplete production changes from this parallel branch.
+- Do not use synthetic mock-debate fixtures as evidence of live provider certification.
 
 ## Parallel boundary and merge notes
 

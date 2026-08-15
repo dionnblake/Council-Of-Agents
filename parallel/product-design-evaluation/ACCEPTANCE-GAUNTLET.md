@@ -61,6 +61,8 @@ Retain per-seat raw status, stdout/stderr, version, requested model, served-mode
 
 Use a synthetic repository fixture and a harmless provider command where possible.
 
+The detailed threat model, injection corpus, and safety cases are in `security/THREAT-MODEL.md`, `security/PROMPT-INJECTION-CORPUS.md`, and `security/SAFETY-TEST-CASES.md`.
+
 ### Repository and snapshot boundary
 
 - Prove the real repository is unchanged before and after a complete debate attempt.
@@ -130,6 +132,8 @@ Use a synthetic repository fixture and a harmless provider command where possibl
 
 ## Gate 5: Failure acceptance
 
+Use `PROVIDER-FAILURE-MATRIX.md` as the authoritative detection, message, retry, state, degraded-mode, and audit contract.
+
 Exercise each failure with a safe fixture or recorded provider simulation:
 
 - Claude quota limit.
@@ -189,7 +193,18 @@ Use the visual smoke-test checklist at a supported Windows resolution and at 125
 
 The reviewer records `KEEP`, `REVISE`, `REMOVE`, or `CANNOT_DETERMINE` findings. “Looks good” is not a criterion. If visual evidence is missing, the reviewer says `CANNOT_DETERMINE` and names the missing state or screen.
 
-## Gate 7: Documentation and DOX
+## Gate 7: State, fixture, and artifact acceptance
+
+- Exercise every state in `UI-STATE-CATALOG.md` with a deterministic mock or safe failure fixture.
+- Render all ten files under `fixtures/mock-debates/` without provider calls.
+- Confirm the mock debates show claims, evidence, disagreements, repairs/failures, decisions, degraded mode, and prompt readiness accurately.
+- Validate the required sections and traceability rules in `MASTER-PROMPT-QUALITY-SPEC.md` against at least five gold examples.
+- Create and reopen a `DECISION-RECORD-SPEC.md` record without provider availability.
+- Walk through `ONBOARDING-SPEC.md` diagnostics, including Codex WSL isolation states.
+- Replay `DEMO-SCENARIO.md` with live or clearly labelled synthetic inputs.
+- Confirm UI copy follows `PRODUCT-LANGUAGE.md` and does not use execution or employee metaphors.
+
+## Gate 8: Documentation and DOX
 
 - Confirm product scope still says Council advises and the human decides.
 - Confirm exactly five V1 reasoning packages are documented.

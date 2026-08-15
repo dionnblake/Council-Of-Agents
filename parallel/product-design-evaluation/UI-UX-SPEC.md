@@ -221,7 +221,7 @@ Last checked     local timestamp
 
 **Failure state:** failed seats remain in the provider strip with the failure artifact. Partial output is marked partial and cannot silently populate a final position.
 
-**Keyboard behavior:** `Ctrl+1/2/3` selects the round view, `J/K` moves between claims, `E` opens evidence for the selected claim, `R` runs the next permitted round, and `Esc` closes the inspector.
+**Keyboard behavior:** `Ctrl+1/2/3` selects the round view, `J/K` moves between claims, `Ctrl+E` opens evidence for the selected claim, `R` runs the next permitted round, and `Esc` closes the inspector. The detailed keyboard and assistive-technology contract is authoritative in `ACCESSIBILITY-KEYBOARD-SPEC.md`.
 
 **Visual hierarchy:** the question and unresolved decision issue sit above claims; claims sit above transcript. Do not make provider prose the dominant visual object.
 
@@ -342,7 +342,7 @@ Reject All
 
 **Failure state:** missing state, non-deterministic compilation, or export write failure is explicit. No partial prompt is presented as final.
 
-**Keyboard behavior:** `Ctrl+C` copies only when the prompt surface is focused or the Copy button is focused; `Ctrl+S` saves through the app's local export flow; `Esc` returns to Decision.
+**Keyboard behavior:** `Ctrl+Shift+C` copies only when the prompt surface is focused or the Copy button is focused; `Ctrl+S` saves through the app's local export flow; `Esc` returns to Decision. The detailed keyboard and assistive-technology contract is authoritative in `ACCESSIBILITY-KEYBOARD-SPEC.md`.
 
 **Visual hierarchy:** the prompt is readable as a document, while status and metadata remain visible in a narrow header. The stop boundary is visually explicit.
 

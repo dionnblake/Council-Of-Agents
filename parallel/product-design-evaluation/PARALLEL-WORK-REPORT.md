@@ -2,13 +2,15 @@
 
 ## Work completed
 
-Created the product, design, reasoning-skill, stack-selection, benchmark, evaluation, acceptance, portfolio, and engineering handoff package for Council of Agents in a separate worktree and dedicated branch.
+Created the product, design, reasoning-skill, stack-selection, benchmark, security, mock-debate, evaluation, acceptance, accessibility, performance, prompt-quality, decision-record, onboarding, demo, portfolio, and engineering handoff package for Council of Agents in a separate worktree and dedicated branch.
 
 No production runtime code, schemas, provider adapters, UI source, persistence files, or primary-agent files were edited.
 
 ## Verification status
 
 - **PASS:** all 12 required deliverable files exist.
+- **PASS:** expanded package contains security threat/injection/safety documents, provider failure matrix, state catalog, accessibility/keyboard specification, performance budgets, master-prompt quality specification, decision-record specification, onboarding, demo, product language, and release gate.
+- **PASS:** ten complete synthetic mock debates exist under `fixtures/mock-debates/` and are provider-free.
 - **PASS:** all nine specified UI screens contain purpose, information, controls, navigation, empty, loading, failure, keyboard, and hierarchy sections.
 - **PASS:** benchmark corpus contains 25 complete fixtures, 11 repository-grounded fixtures, and 18 no-repository fixtures; all repository fixtures describe evidence characteristics.
 - **PASS:** every required benchmark topic and both Compare/Discovery paths are represented.
@@ -32,11 +34,40 @@ parallel/product-design-evaluation/ACCEPTANCE-GAUNTLET.md
 parallel/product-design-evaluation/PORTFOLIO-STORY.md
 parallel/product-design-evaluation/ENGINEERING-HANDOFF.md
 parallel/product-design-evaluation/PARALLEL-WORK-REPORT.md
+parallel/product-design-evaluation/security/AGENTS.md
+parallel/product-design-evaluation/security/THREAT-MODEL.md
+parallel/product-design-evaluation/security/PROMPT-INJECTION-CORPUS.md
+parallel/product-design-evaluation/security/SAFETY-TEST-CASES.md
+parallel/product-design-evaluation/PROVIDER-FAILURE-MATRIX.md
+parallel/product-design-evaluation/UI-STATE-CATALOG.md
+parallel/product-design-evaluation/ACCESSIBILITY-KEYBOARD-SPEC.md
+parallel/product-design-evaluation/PERFORMANCE-BUDGETS.md
+parallel/product-design-evaluation/MASTER-PROMPT-QUALITY-SPEC.md
+parallel/product-design-evaluation/DECISION-RECORD-SPEC.md
+parallel/product-design-evaluation/ONBOARDING-SPEC.md
+parallel/product-design-evaluation/DEMO-SCENARIO.md
+parallel/product-design-evaluation/PRODUCT-LANGUAGE.md
+parallel/product-design-evaluation/RELEASE-GATE.md
+parallel/product-design-evaluation/fixtures/AGENTS.md
+parallel/product-design-evaluation/fixtures/mock-debates/AGENTS.md
+parallel/product-design-evaluation/fixtures/mock-debates/unanimous-but-correct.md
+parallel/product-design-evaluation/fixtures/mock-debates/unanimous-but-suspicious.md
+parallel/product-design-evaluation/fixtures/mock-debates/strong-minority.md
+parallel/product-design-evaluation/fixtures/mock-debates/evidence-changes-position.md
+parallel/product-design-evaluation/fixtures/mock-debates/fake-citation.md
+parallel/product-design-evaluation/fixtures/mock-debates/no-basis.md
+parallel/product-design-evaluation/fixtures/mock-debates/provider-timeout.md
+parallel/product-design-evaluation/fixtures/mock-debates/stack-discovery.md
+parallel/product-design-evaluation/fixtures/mock-debates/design-debate.md
+parallel/product-design-evaluation/fixtures/mock-debates/degraded-two-seat.md
 ```
 
 ## Major product decisions
 
 - Council is a local-first technical deliberation product, not a coding or execution agent.
+- Security is fail-closed: untrusted content may be evidence but never controller authority, and provider failure never becomes agreement.
+- Provider failure behavior is explicit across detection, user message, retry, state, degraded continuation, and audit event.
+- Mock debates are first-class UI/QA inputs and are clearly synthetic rather than live certification evidence.
 - The human remains the final authority; no majority vote or model moderator exists.
 - The product flow ends at a deterministic master prompt and manual copy.
 - R1 is independent, R2 is explicit cross-examination, and R3 preserves revision and dissent.
@@ -77,10 +108,12 @@ parallel/product-design-evaluation/PARALLEL-WORK-REPORT.md
 - R1-only and full-council checkpoints measure whether debate adds value beyond independent answers.
 - Negative controls catch malformed output, citation shifts, hidden peer visibility, unsafe snapshots, and nondeterministic exports.
 - No single aggregate Council quality score is used.
+- Security evaluation includes 18 threat classes, 20 prompt-injection corpus cases, and 30 safety test cases.
+- Master-prompt quality requires traceability, preserved dissent, explicit conditions, and a manual-copy stop boundary.
 
 ## Acceptance-test summary
 
-The Acceptance Gauntlet covers provider certification, model selection, served-model limitations, WSL isolation, snapshot and packet safety, secret/reparse controls, debate independence, peer response semantics, human decision authority, deterministic master prompt output, failure recovery, keyboard/UI behavior, and design-specific smoke tests.
+The Acceptance Gauntlet now covers provider certification, model selection, served-model limitations, WSL isolation, snapshot and packet safety, secret/reparse controls, prompt injection, debate independence, peer response semantics, human decision authority, deterministic master prompt output, failure recovery, complete UI state coverage, mock-debate rendering, keyboard/accessibility behavior, performance budgets, onboarding, packaging, fresh-machine, and design-specific smoke tests.
 
 ## Engineering handoff items
 
@@ -112,7 +145,8 @@ The handoff separates `MUST IMPLEMENT`, `SHOULD IMPLEMENT`, `DESIGN REQUIREMENT`
 1. Review `ENGINEERING-HANDOFF.md` against the primary architecture and resolve contradictions.
 2. Merge the documentation subtree without touching production paths.
 3. Align existing production skill and schema contracts with the five-package and output-position requirements.
-4. Add benchmark fixtures and evaluation harnesses using synthetic inputs.
-5. Implement or refine UI states against `UI-UX-SPEC.md` and `DESIGN-TASTE-SPEC.md`.
-6. Run the `ACCEPTANCE-GAUNTLET.md` and record declared limitations.
-7. Perform the required root DOX index update after concurrent work is stable.
+4. Add executable benchmark/safety harnesses using the synthetic fixtures and prompt corpus.
+5. Implement or refine UI states, accessibility, onboarding, and mock-debate rendering against the specifications.
+6. Measure application performance budgets and run the provider failure matrix.
+7. Replay the demo scenario and run the `RELEASE-GATE.md`/`ACCEPTANCE-GAUNTLET.md`, recording declared limitations.
+8. Perform the required root DOX index update after concurrent work is stable.
