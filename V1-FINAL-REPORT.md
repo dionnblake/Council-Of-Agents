@@ -144,6 +144,7 @@ The command reports presence state only. No credential values were printed, no A
 | Rust workspace tests | PASS, 29/29 | `cargo test --workspace` |
 | Workspace type/check validation | PASS | `cargo check --workspace` |
 | React TypeScript and production build | PASS | `npm run build` |
+| Global project verifier | VERIFIED | `RUSTUP_TOOLCHAIN=1.96.0-x86_64-pc-windows-msvc node verify.js` |
 | Tauri CLI | PASS | `npx tauri --version`, version 2.5.0 |
 | Native Tauri shell | PASS | `npx tauri dev --no-watch`; responsive native window observed |
 | CLI provider safety gate | PASS_WITH_RUNTIME_BLOCKER | billing guard blocked dispatch; all provider preflights READY |
@@ -190,6 +191,7 @@ These gates require safe provider availability or explicit host/runtime access. 
 
 ```powershell
 Set-Location 'C:\Users\<USER>\Desktop\VIBE CODING PROJECTS\Council Of Agents'
+$env:RUSTUP_TOOLCHAIN = '1.96.0-x86_64-pc-windows-msvc'
 $env:CARGO_TARGET_DIR = 'C:\council-target'
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace
@@ -206,4 +208,4 @@ Do not start a live provider round until the provider status gate reports safe s
 
 ## Closeout
 
-The V1 implementation is verified locally with a declared live-runtime blocker. M1 remains unopened. No external repository, provider configuration, account, credential, billing setting, or public release was modified by this pass.
+The V1 implementation is verified locally with a declared live-runtime blocker. M1 remains unopened. No provider configuration, account, credential, or billing setting was modified by this pass. The authorized public repository publication completed at [github.com/dionnblake/Council-Of-Agents](https://github.com/dionnblake/Council-Of-Agents) on the `main` branch at merge commit `71a3be4`.
