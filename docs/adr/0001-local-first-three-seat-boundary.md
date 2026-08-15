@@ -21,7 +21,7 @@ The Rust core owns state, persistence, provider lifecycle, packet and snapshot s
 - Cross-provider context is transferred as immutable files, not hidden session state.
 - A human decides before export.
 - The architecture can be tested with fake executors without spending provider quota.
-- Repository-grounded runs require an explicit snapshot bridge; the controller never falls back to reading the real repository directly.
+- Repository-grounded runs require a controller-created snapshot bridge; the controller never falls back to reading or dispatching the real repository directly.
 
 ## Rejected alternatives
 

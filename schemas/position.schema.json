@@ -132,7 +132,69 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "peer_responses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "peer_claim_reference",
+          "classification",
+          "reason",
+          "evidence"
+        ],
+        "properties": {
+          "peer_claim_reference": {
+            "type": "string",
+            "minLength": 1
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "CONCEDE",
+              "DISPUTE",
+              "NO_BASIS_TO_JUDGE"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[^:]+:[0-9]+-[0-9]+$"
+            }
+          }
+        }
+      }
+    },
+    "withdrawn_claims": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "conceded_claims": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "remaining_disputes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "revision_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prior_position_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-fA-F]{64}$"
     }
   }
 }
-

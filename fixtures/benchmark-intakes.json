@@ -1,0 +1,86 @@
+[
+  {
+    "question": "Should the first release use SQLite or PostgreSQL for durable decision records?",
+    "mode": "COMPARE",
+    "options": ["SQLite", "PostgreSQL"],
+    "product_type": "WINDOWS",
+    "decision_type": "DATABASE",
+    "hard_constraints": ["Local-first", "No hosted dependency"],
+    "priority": "Lowest operational complexity",
+    "current_leaning": "SQLite",
+    "current_leaning_reason": "The first release is local-only.",
+    "repository": null
+  },
+  {
+    "question": "Should the desktop shell use Tauri or Electron for the first public build?",
+    "mode": "COMPARE",
+    "options": ["Tauri", "Electron"],
+    "product_type": "DESKTOP",
+    "decision_type": "ARCHITECTURE",
+    "hard_constraints": ["Windows-first", "Small install footprint"],
+    "priority": "Reliable desktop packaging",
+    "current_leaning": null,
+    "current_leaning_reason": null,
+    "repository": null
+  },
+  {
+    "question": "Should this backend expose REST or GraphQL for the first integration boundary?",
+    "mode": "COMPARE",
+    "options": ["REST", "GraphQL"],
+    "product_type": "BACKEND",
+    "decision_type": "ARCHITECTURE",
+    "hard_constraints": ["Simple client onboarding", "Observable failure modes"],
+    "priority": "Smallest reliable contract",
+    "current_leaning": null,
+    "current_leaning_reason": null,
+    "repository": null
+  },
+  {
+    "question": "Should the game prototype use Unity or Godot for the first vertical slice?",
+    "mode": "COMPARE",
+    "options": ["Unity", "Godot"],
+    "product_type": "GAME",
+    "decision_type": "STACK",
+    "hard_constraints": ["Fast iteration", "No unnecessary platform lock-in"],
+    "priority": "Fastest validated prototype",
+    "current_leaning": null,
+    "current_leaning_reason": null,
+    "repository": null
+  },
+  {
+    "question": "Should the mobile product use native Android or a cross-platform framework first?",
+    "mode": "COMPARE",
+    "options": ["Native Android", "Cross-platform"],
+    "product_type": "ANDROID",
+    "decision_type": "ARCHITECTURE",
+    "hard_constraints": ["Offline behavior", "Accessible UI"],
+    "priority": "Best user path with controlled maintenance",
+    "current_leaning": null,
+    "current_leaning_reason": null,
+    "repository": null
+  },
+  {
+    "question": "What design direction should the first release use to feel calm, credible, and easy to scan?",
+    "mode": "DISCOVERY",
+    "options": [],
+    "product_type": "DESKTOP",
+    "decision_type": "DESIGN",
+    "hard_constraints": ["Readable at a glance", "No ornamental noise"],
+    "priority": "Clarity and trust",
+    "current_leaning": null,
+    "current_leaning_reason": null,
+    "repository": null
+  },
+  {
+    "question": "Which stack should the first local-first desktop product use when no candidates are known yet?",
+    "mode": "DISCOVERY",
+    "options": [],
+    "product_type": "DESKTOP",
+    "decision_type": "STACK",
+    "hard_constraints": ["Local-first", "Reversible first release"],
+    "priority": "Lowest combined delivery and operational risk",
+    "current_leaning": null,
+    "current_leaning_reason": null,
+    "repository": null
+  }
+]

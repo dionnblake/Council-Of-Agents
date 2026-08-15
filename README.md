@@ -27,7 +27,8 @@ The V1 implementation now includes:
 - immutable packet hashing, WSL stdin bridging, Linux payload hash verification, and separate scratch paths;
 - fresh-process provider command contracts for Claude, Antigravity, and Codex WSL;
 - SQLite persistence for debates, turns, attempts, raw artifacts, positions, packets, snapshots, decisions, exports, safety events, and a hash-chained append-only audit log;
-- a Tauri 2 command bridge and React command center for intake, explicit round dispatch, turn visibility, human decision, and local deterministic export;
+- a Tauri 2 command bridge and React command center for intake, R0 bounded stack discovery, explicit round dispatch, turn visibility, recovery/degraded-seat choices, evidence review, human decision, and local deterministic export;
+- independent-only evaluation mode with deterministic citation/schema/repair/wall-time/peer-response/revision metrics, without silently treating a reduced council as a production result;
 - exactly five top-level reasoning-only V1 skill packages.
 
 Provider execution is opt-in from the desktop round controls. A live three-seat call is not run during ordinary builds or tests.
@@ -62,7 +63,16 @@ $env:CARGO_TARGET_DIR = 'C:\council-target'
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo check -p council-desktop
 ~~~
 
-Launch the shell with the Tauri 2 CLI when it is installed. The current repository verifies the frontend through Vite; the Tauri CLI itself is an environment prerequisite.
+Launch the shell with the checked-in Tauri 2 CLI:
+
+~~~powershell
+Push-Location app
+npx tauri --version
+npx tauri dev --no-watch
+Pop-Location
+~~~
+
+The native smoke path requires the Windows WebView2 runtime. Provider dispatch remains opt-in and is blocked when unsafe billing/routing variables are present.
 
 ## Evidence
 

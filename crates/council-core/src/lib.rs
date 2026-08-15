@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod compiler;
+pub mod discovery;
 pub mod evidence;
 pub mod handoff;
 pub mod model;
@@ -17,6 +18,10 @@ pub use bridge::{
     verify_bridge_manifests,
 };
 pub use compiler::{compile_decision_record, compile_master_prompt, content_hash};
+pub use discovery::{
+    DiscoveryCandidate, DiscoveryNomination, DiscoveryProposal, DiscoveryResult,
+    build_r0_candidate_union, merge_discovery_proposals,
+};
 pub use evidence::{EvidenceIndex, EvidenceVerdict, VerifiedEvidence};
 pub use handoff::{
     ReconstructionCheck, StatelessHandoffPacket, StatelessReconstruction, build_stateless_packet,
@@ -24,8 +29,8 @@ pub use handoff::{
 };
 pub use model::*;
 pub use orchestration::{
-    AttemptRecord, CouncilOrchestrator, CouncilRunResult, LiveProviderExecutor, RoundRequest,
-    TurnRecord, extract_position_value,
+    AttemptRecord, CouncilOrchestrator, CouncilRunResult, DiscoveryRunResult, DiscoveryTurnRecord,
+    LiveProviderExecutor, RoundRequest, TurnRecord, extract_position_value,
 };
 pub use packet::{ContextPacket, PacketMetadata};
 pub use persistence::Database;

@@ -1,3 +1,4 @@
+use crate::discovery::{DiscoveryProposal, extract_discovery_nominations};
 use crate::model::{FailureType, ProviderKind, ProviderPosition, TurnState, new_id};
 use crate::providers::{
     CommandSpec, ProviderCallRequest, ProviderCallResult, ProviderError, ProviderRegistry,
@@ -93,6 +94,22 @@ pub struct CouncilRunResult {
     pub final_positions: Vec<ProviderPosition>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiscoveryTurnRecord {
+    pub turn_id: String,
+    pub provider: ProviderKind,
+    pub state: TurnState,
+    pub repair_policy: RepairPolicy,
+    pub attempts: Vec<AttemptRecord>,
+    pub proposal: Option<DiscoveryProposal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiscoveryRunResult {
+    pub turns: Vec<DiscoveryTurnRecord>,
+    pub proposals: Vec<DiscoveryProposal>,
+}
+
 pub struct CouncilOrchestrator<E> {
     pub executor: E,
 }
@@ -130,6 +147,89 @@ impl<E: ProviderExecutor> CouncilOrchestrator<E> {
             positions,
             final_positions: latest.into_values().collect(),
         }
+    }
+
+    pub fn run_discovery(&self, provider_requests: &[ProviderCallRequest]) -> DiscoveryRunResult {
+        let mut turns = Vec::new();
+        let mut proposals = Vec::new();
+        for request in provider_requests {
+            let turn_id = request.turn_id.clone().unwrap_or_else(|| new_id("turn"));
+            let policy = repair_policy_for(&request.provider);
+            let mut attempts = Vec::new();
+            let mut attempt_number = 1_u8;
+            let mut current_request = request.clone();
+            let (state, proposal) = loop {
+                let execution = self.executor.execute(&current_request);
+                let Ok(raw_result) = execution else {
+                    attempts.push(AttemptRecord {
+                        attempt_number,
+                        state: TurnState::Failed,
+                        failure_type: Some(FailureType::SafetyViolation),
+                        raw_result: None,
+                    });
+                    break (TurnState::Failed, None);
+                };
+                if let Some(failure_type) = raw_result.failure_type.clone() {
+                    let state = state_for_failure(&failure_type);
+                    attempts.push(AttemptRecord {
+                        attempt_number,
+                        state: state.clone(),
+                        failure_type: Some(failure_type),
+                        raw_result: Some(raw_result),
+                    });
+                    break (state, None);
+                }
+                let Some(nominations) = extract_discovery_nominations(&raw_result.stdout) else {
+                    let failure_type = FailureType::NoStructuredOutput;
+                    let should_repair = should_repair(&policy, attempt_number, &failure_type);
+                    attempts.push(AttemptRecord {
+                        attempt_number,
+                        state: if should_repair {
+                            TurnState::Repairing
+                        } else {
+                            TurnState::Quarantined
+                        },
+                        failure_type: Some(failure_type),
+                        raw_result: Some(raw_result),
+                    });
+                    if should_repair {
+                        current_request.prompt = format!(
+                            "{}\nReturn only one corrected JSON object with a candidates array. Each candidate needs a label and brief justification.",
+                            request.prompt
+                        );
+                        attempt_number += 1;
+                        continue;
+                    }
+                    break (TurnState::Quarantined, None);
+                };
+                let raw_artifact_id = raw_result.raw_artifact_id.clone();
+                attempts.push(AttemptRecord {
+                    attempt_number,
+                    state: TurnState::Valid,
+                    failure_type: None,
+                    raw_result: Some(raw_result),
+                });
+                let proposal = DiscoveryProposal {
+                    provider: request.provider.clone(),
+                    turn_id: turn_id.clone(),
+                    raw_artifact_id,
+                    nominations,
+                };
+                break (TurnState::Valid, Some(proposal));
+            };
+            if let Some(proposal_ref) = &proposal {
+                proposals.push(proposal_ref.clone());
+            }
+            turns.push(DiscoveryTurnRecord {
+                turn_id,
+                provider: request.provider.clone(),
+                state,
+                repair_policy: policy,
+                attempts,
+                proposal,
+            });
+        }
+        DiscoveryRunResult { turns, proposals }
     }
 
     fn run_turn(
@@ -380,6 +480,9 @@ mod tests {
             linux_packet_path: Some(PathBuf::from("/packet.md")),
             linux_working_directory: Some(PathBuf::from("/")),
             linux_schema_path: Some(PathBuf::from("/schema.json")),
+            snapshot_path: None,
+            linux_snapshot_path: None,
+            snapshot_manifest_hash: None,
         }
     }
 
@@ -429,6 +532,34 @@ mod tests {
         assert_eq!(
             result.turns[0].repair_policy,
             RepairPolicy::NoAutomaticRepair
+        );
+    }
+
+    #[test]
+    fn discovery_round_collects_provider_nominations_without_selecting_a_winner() {
+        let executor = FakeExecutor {
+            outputs: Arc::new(Mutex::new(VecDeque::from([
+                r#"{"candidates":[{"label":"SQLite","justification":"Local-first and reversible."}]}"#.to_string(),
+                r#"{"candidates":[{"label":"Tauri","justification":"Native desktop packaging."}]}"#.to_string(),
+            ]))),
+        };
+        let orchestrator = CouncilOrchestrator::new(executor);
+        let result = orchestrator.run_discovery(&[
+            request(ProviderKind::Claude),
+            request(ProviderKind::CodexWsl),
+        ]);
+        assert_eq!(result.proposals.len(), 2);
+        assert!(
+            result
+                .proposals
+                .iter()
+                .all(|proposal| !proposal.nominations.is_empty())
+        );
+        assert!(
+            result
+                .turns
+                .iter()
+                .all(|turn| turn.state == TurnState::Valid)
         );
     }
 }

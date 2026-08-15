@@ -243,6 +243,8 @@ pub struct ProviderConfig {
     pub enabled: bool,
     pub timeout_ms: u64,
     pub config_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub safety_config_path: Option<PathBuf>,
     pub wsl_distribution: Option<String>,
     pub wsl_user: Option<String>,
     pub wsl_home: Option<String>,
@@ -267,6 +269,7 @@ impl ProviderConfig {
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: Some(local_app_data.join("council").join("claude-cfg")),
+                safety_config_path: None,
                 wsl_distribution: None,
                 wsl_user: None,
                 wsl_home: None,
@@ -283,6 +286,7 @@ impl ProviderConfig {
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: None,
+                safety_config_path: None,
                 wsl_distribution: None,
                 wsl_user: None,
                 wsl_home: None,
@@ -304,6 +308,7 @@ impl ProviderConfig {
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: None,
+                safety_config_path: None,
                 wsl_distribution: Some("CouncilCodexWSL".to_string()),
                 wsl_user: Some("council".to_string()),
                 wsl_home: Some("/home/council".to_string()),
@@ -323,6 +328,10 @@ pub struct Debate {
     pub intake: Intake,
     pub state: DebateState,
     pub council_size: u8,
+    #[serde(default)]
+    pub independent_only: bool,
+    #[serde(default)]
+    pub discovery: Option<crate::discovery::DiscoveryResult>,
     pub provider_models: BTreeMap<ProviderKind, ModelSelection>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -336,14 +345,22 @@ impl Debate {
             intake,
             state: DebateState::Draft,
             council_size: provider_models.len() as u8,
+            independent_only: false,
+            discovery: None,
             provider_models,
             created_at: now,
             updated_at: now,
         }
     }
+
+    pub fn with_independent_only(mut self, independent_only: bool) -> Self {
+        self.independent_only = independent_only;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Claim {
     pub id: String,
     pub text: String,
@@ -352,6 +369,7 @@ pub struct Claim {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Position {
     #[serde(default = "default_schema_version")]
     pub schema_version: String,
@@ -376,6 +394,18 @@ pub struct Position {
     pub acceptance_criteria: Vec<String>,
     #[serde(default)]
     pub implementation_constraints: Vec<String>,
+    #[serde(default)]
+    pub peer_responses: Vec<PeerResponse>,
+    #[serde(default)]
+    pub withdrawn_claims: Vec<String>,
+    #[serde(default)]
+    pub conceded_claims: Vec<String>,
+    #[serde(default)]
+    pub remaining_disputes: Vec<String>,
+    #[serde(default)]
+    pub revision_reason: Option<String>,
+    #[serde(default)]
+    pub prior_position_hash: Option<String>,
 }
 
 fn default_schema_version() -> String {
@@ -402,12 +432,31 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ClaimRelation {
     pub id: String,
     pub source_claim_id: String,
     pub target_claim_id: Option<String>,
     pub relation: String,
     pub reason: String,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PeerResponseClassification {
+    Concede,
+    Dispute,
+    NoBasisToJudge,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PeerResponse {
+    pub peer_claim_reference: String,
+    pub classification: PeerResponseClassification,
+    pub reason: String,
+    #[serde(default)]
     pub evidence: Vec<String>,
 }
 
@@ -455,4 +504,20 @@ pub struct DecisionRecord {
     pub risks: Vec<String>,
     pub acceptance_criteria: Vec<String>,
     pub human_decision: HumanDecision,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvaluationMetrics {
+    pub debate_id: String,
+    pub round: u8,
+    pub citation_validity: String,
+    pub schema_success_percent: u8,
+    pub repair_rate_percent: u8,
+    pub wall_time_ms_total: u128,
+    pub failure_types: BTreeMap<String, u32>,
+    pub peer_response_quality_percent: Option<u8>,
+    pub revision_frequency_percent: Option<u8>,
+    pub decision_changed: Option<bool>,
+    pub new_considerations: u32,
+    pub independent_only: bool,
 }

@@ -105,6 +105,23 @@ fn validate_semantics(position: &Position, repository_grounded: bool, errors: &m
             }
         }
     }
+    for (index, response) in position.peer_responses.iter().enumerate() {
+        if response.peer_claim_reference.trim().is_empty() {
+            errors.push(format!(
+                "peer_responses[{index}].peer_claim_reference must be non-empty"
+            ));
+        }
+        if response.reason.trim().is_empty() {
+            errors.push(format!("peer_responses[{index}].reason must be non-empty"));
+        }
+        for citation in &response.evidence {
+            if !is_citation_shape(citation) {
+                errors.push(format!(
+                    "peer_responses[{index}].evidence has invalid path:startLine-endLine value"
+                ));
+            }
+        }
+    }
     if position.flip_condition.trim().is_empty() {
         errors.push("flip_condition must be non-empty".to_string());
     }
@@ -129,6 +146,22 @@ fn validate_semantics(position: &Position, repository_grounded: bool, errors: &m
     }
     if position.commitment == Commitment::Conditional && position.flip_condition.trim().len() < 12 {
         errors.push("CONDITIONAL positions require a material flip condition".to_string());
+    }
+    if position
+        .revision_reason
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push("revision_reason cannot be blank when supplied".to_string());
+    }
+    if position
+        .prior_position_hash
+        .as_deref()
+        .is_some_and(|value| {
+            value.len() != 64 || !value.chars().all(|character| character.is_ascii_hexdigit())
+        })
+    {
+        errors.push("prior_position_hash must be a SHA-256 hex value when supplied".to_string());
     }
 }
 
@@ -178,6 +211,12 @@ mod tests {
             what_my_recommendation_is_bad_at: String::new(),
             acceptance_criteria: Vec::new(),
             implementation_constraints: Vec::new(),
+            peer_responses: Vec::new(),
+            withdrawn_claims: Vec::new(),
+            conceded_claims: Vec::new(),
+            remaining_disputes: Vec::new(),
+            revision_reason: None,
+            prior_position_hash: None,
         }
     }
 

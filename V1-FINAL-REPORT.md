@@ -4,56 +4,74 @@ Date: 2026-08-15
 
 ## Executive verdict
 
-~~~text
-V1_STATUS = IMPLEMENTED_FOUNDATION_WITH_RUNTIME_GATES
-DEFINITION_OF_DONE = NOT_YET_FULLY_CERTIFIED
+```text
+V1_STATUS = IMPLEMENTED_WITH_DECLARED_RUNTIME_BLOCKER
+DEFINITION_OF_DONE = IMPLEMENTATION_VERIFIED; LIVE_PROVIDER_CERTIFICATION_PENDING
 M1 = NOT_STARTED
-~~~
+```
 
-The repository now contains the V1 Rust core, provider safety contracts, SQLite persistence, immutable packet and snapshot primitives, Tauri command bridge, React desktop surface, five reasoning-only skill packages, schemas, fixtures, documentation, and automated verification.
+The V1 implementation is present across the Rust controller, SQLite persistence, safety boundary, provider contracts, Tauri desktop shell, React command center, schemas, fixtures, skills, and documentation. The final local verification pass passed formatting, 29 Rust tests, workspace checking, the React production build, CLI safety gates, synthetic snapshot/evidence checks, and a native Tauri window launch.
 
-The full product definition is not claimed complete because this environment did not permit a live three-seat provider round or a Tauri GUI smoke test. The controller intentionally refused the current process environment because a blocked billing/routing variable was present. No API-key fallback was used.
+The product is not marked fully certified because the current Windows process environment reports a blocked billing/routing variable. The controller correctly refuses to route around that guard, so no authenticated Claude, Antigravity, or Codex WSL provider call was launched during this build pass. The prior M0.8 seat certifications remain the evidence basis for the lineup, but a current-host live three-seat R1/R2/R3 run is still pending.
 
-## What was built
+## What was implemented
 
-### Core
+### Controller and domain
 
-- council-core owns the debate state machine, turn states, provider registry, explicit environment allowlists, model identity status, typed failure taxonomy, timeout/cancellation metadata, WSL fallback, structured output validation, semantic validation, controller-owned claim IDs, repair policy, packets, snapshots, evidence, stateless handoff checks, persistence, and deterministic compilation.
-- council-cli exposes provider preflight, database initialization, intake validation, synthetic snapshot creation, citation verification, demo generation, and deterministic compilation.
-- SQLite uses normal relational tables plus an append-only hash-chained audit log with update/delete triggers.
-- Per-debate requested model overrides are stored and flow into round dispatch.
+- Rust core owns intake validation, deterministic debate state, provider lifecycle, persistence, safety gates, structured output validation, semantic validation, repair policy, evidence, stateless reconstruction, evaluation metrics, and deterministic compilation.
+- Debate lifecycle is R1 opening, R2 cross-examination, R3 final positions, human decision, deterministic compile, and local export.
+- Independent-only evaluation is explicit and stops at the human gate after opening positions.
+- R0 stack discovery is bounded, preserves the status quo, limits owner alternatives, and is embedded in stack-selection packets.
+- R2 peer positions are anonymized before delivery. R3 revisions require a reason and prior-position hash. Claim relations, concessions, disputes, and unresolved disagreements are persisted.
+- A degraded-seat path requires a human rationale and at least two remaining seats. The council never silently shrinks.
+- Human decisions preserve unanimity, minority positions, selected option, modified decision, rationale, and verified/unverified evidence.
 
 ### Safety and evidence
 
-- Snapshots copy bytes rather than using git archive.
-- Provider instruction/config surfaces, Git metadata, ignored files, secret matches, symlinks, and reparse points are excluded or rejected and recorded.
-- Windows snapshot sealing uses native ACL APIs; icacls is not the primary mechanism.
-- Packets are immutable, exact-byte checked, SHA-256 hashed, and retain rendered skill names.
-- Codex payloads are streamed through tar.exe and wsl.exe stdin to CouncilCodexWSL. The real repository is not mounted.
-- WSL packet/schema hashes are checked before Codex dispatch.
-- Evidence verification distinguishes VERIFIED_EXACT, VERIFIED_CONTENT_FOUND_ELSEWHERE, and UNVERIFIED.
+- Real repositories are never passed directly to providers. The controller creates or reloads a Council-owned sanitized snapshot.
+- Snapshot copying preserves file bytes, excludes instructions/config/hooks/MCP/Git/secret matches, rejects symlinks and reparse points, records exclusions, hashes files, and seals the evidence tree read-only.
+- Provider packets are exact-byte, immutable, hashed files. Rendered skill names and versions remain in the packet.
+- Codex payloads are streamed into `CouncilCodexWSL` over WSL stdin. The Windows repository is not mounted. Linux snapshot, packet, and schema hashes are checked before Codex dispatch, with separate Linux scratch.
+- Evidence verification distinguishes `VERIFIED_EXACT`, `VERIFIED_CONTENT_FOUND_ELSEWHERE`, and `UNVERIFIED`, and persists content/file hashes.
+- API-key, custom-provider, custom-base-URL, and alternate routing variables are rejected without printing values.
 
-### Deliberation and governance
+### Provider contracts
 
-- Default flow is R1 opening, R2 cross-examination, R3 final positions, then the human gate.
-- A targeted round is explicit and capped at one.
-- A round cannot advance if all three seats do not produce usable structured positions.
-- Claude and Codex have no automatic repair; Antigravity has one repair attempt.
-- Provider output never becomes authority by majority.
-- The human rationale is persisted before deterministic export.
-- Export creates master-prompt.md and decision-record.md in Council application data. There is no implementation, handoff, branch, commit, push, deploy, or automatic external-harness action.
+The registry contains exactly the three required seats:
+
+```text
+Claude Code       claude-haiku-4-5-20251001   Pass
+Antigravity CLI   gemini-3.7-flash-low        PassWithDeclaredLimitation
+Codex WSL         gpt-5.6-luna                PassWithDeclaredLimitation
+```
+
+Requested model IDs are persisted per debate and flow into provider dispatch. Reported served identity is never invented. Fresh processes, explicit timeouts, sanitized environments, raw artifacts, typed failures, deterministic call IDs, idempotent dispatch intents, and fail-closed restart recovery are implemented.
 
 ### Desktop
 
-- Tauri 2 commands cover provider status, debate creation, recent debates, position retrieval, explicit round dispatch, human decision, and deterministic export.
-- React surfaces Home, New Debate, Active Debate, Decision, and Settings.
-- New Debate supports discovery/compare mode, options, product and decision type, constraints, optional repository intake, per-seat requested model IDs, and priority.
-- Debate shows packet hash, fresh/no-resume mode, seat state, stored recommendations, risks, flip conditions, and next deterministic transition.
-- Decision shows stored positions, dissent, human rationale, and export hashes.
+- Tauri 2 command bridge covers provider status/auth, R0 candidates, debate creation, recent debates, positions, evidence, evaluation metrics, explicit round dispatch, degraded continuation, cancel/resume, human decision, and deterministic export.
+- React surfaces Home, New Debate, Active Debate, Decision, Export, and Settings.
+- New Debate supports compare/discover intake, options, constraints, optional repository grounding, per-seat requested model IDs, priority, and independent-only evaluation.
+- Active Debate shows seat state, packet/evaluation status, recovery/degraded controls, positions, dissent, and next deterministic transitions.
+- Decision shows persisted evidence verdicts and requires a human decision/rationale before export.
+- Export writes only to Council-owned application data and explicitly provides no implementation handoff.
+- The app includes the Tauri 2 CLI as a development dependency. `npx tauri dev --no-watch` built and launched a responsive native `Council of Agents` window in this pass.
+
+### Skills
+
+The repository contains exactly five top-level reasoning-only V1 skill packages:
+
+```text
+architecture.v1
+design-taste.v1
+output-position.v1
+protocol.v1
+stack-selection.v1
+```
 
 ## Final architecture
 
-~~~text
+```text
 React + TypeScript
         |
         v
@@ -67,15 +85,13 @@ SQLite  packets  snapshots  provider runner
              +----------------+----------------+
              |                |                |
         Claude Code     Antigravity CLI   wsl.exe -> CouncilCodexWSL
-~~~
+```
 
-The core is testable without Tauri. Provider calls are fresh processes with explicit timeouts, sanitized environments, raw artifact retention, and typed failure handling.
+The core remains testable without Tauri. Providers receive only fresh, file-based, immutable context. No provider can edit code, create branches, commit, push, deploy, open a coding harness, or become decision authority.
 
-## Provider status
+## Certified seat evidence carried forward
 
-### Certified evidence carried forward
-
-~~~text
+```text
 CLAUDE
 CERTIFICATION: PASS
 SCHEMA: 20/20
@@ -103,163 +119,91 @@ SCHEMA: 20/20
 STATELESS: PASS
 MODEL_IDENTITY: PROVIDER_DOES_NOT_REPORT
 REPAIR_POLICY: NO AUTOMATIC REPAIR
-~~~
+```
 
-Source records: M0.8-FINDINGS.md and CODEX-WSL-FINAL-CERTIFICATION.md.
+Sources: [M0.8-FINDINGS.md](M0.8-FINDINGS.md), [CODEX-WSL-FINAL-CERTIFICATION.md](CODEX-WSL-FINAL-CERTIFICATION.md).
 
-### Current host runtime
+## Current host provider gate
 
-The headless provider command returned:
+The final safe provider preflight returned:
 
-~~~text
+```text
 BILLING = BLOCKED_ENVIRONMENT_VARIABLE_PRESENT
-Claude Code preflight = READY
-Antigravity CLI preflight = READY
-Codex WSL preflight = READY
-~~~
+Claude Code = READY
+Antigravity CLI = READY
+Codex WSL = READY
+```
 
-The provider command reports only the presence state and never prints credential values. Because the environment was blocked, no provider process was launched during this build verification.
+The command reports presence state only. No credential values were printed, no API key was used, and no provider process was launched after the billing guard failed.
 
-## Safety verification
+## Verification matrix
 
-| Control | Result | Evidence |
+| Area | Result | Evidence |
 |---|---|---|
-| Snapshot byte copy and exclusions | PASS | Rust snapshot test |
-| Secret/config/instruction exclusion | PASS | Rust snapshot test |
-| Symlink/reparse rejection | PASS | Snapshot implementation and test path |
-| Native Windows ACL sealing | IMPLEMENTED, live write matrix not rerun here | snapshot.rs |
-| Packet exact bytes and 50/200/500 KB markers | PASS | Rust packet test |
-| WSL bridge plan avoids /mnt/c | PASS | Rust bridge test |
-| WSL payload hash verification | IMPLEMENTED, live transfer not rerun here | Tauri bridge path |
-| Explicit environment allowlist | PASS | Provider command test |
-| API-key/custom-routing rejection | PASS | Provider status and provider guard |
-| Antigravity no-G1-credit guard | PASS | Provider test |
-| Windows Job Object containment | IMPLEMENTED, live provider process not rerun here | Runner implementation |
-| Codex WSL terminate fallback | IMPLEMENTED, live cancellation not rerun here | Provider/runner contract |
-| No automatic handoff | PASS | No command or UI action exists |
+| Rust formatting | PASS | `cargo fmt --all -- --check` |
+| Rust workspace tests | PASS, 29/29 | `cargo test --workspace` |
+| Workspace type/check validation | PASS | `cargo check --workspace` |
+| React TypeScript and production build | PASS | `npm run build` |
+| Tauri CLI | PASS | `npx tauri --version`, version 2.5.0 |
+| Native Tauri shell | PASS | `npx tauri dev --no-watch`; responsive native window observed |
+| CLI provider safety gate | PASS_WITH_RUNTIME_BLOCKER | billing guard blocked dispatch; all provider preflights READY |
+| SQLite synthetic demo | PASS | `council-cli demo` created DB and sealed packet in a temporary directory |
+| Snapshot copy | PASS | fixture snapshot preserved hashes and excluded `AGENTS.md` |
+| Evidence exact control | PASS | `VERIFIED_EXACT` |
+| Evidence shifted control | PASS | `VERIFIED_CONTENT_FOUND_ELSEWHERE` |
+| Deterministic compiler | PASS | unit test |
+| State machine and dispatch recovery | PASS | unit tests |
 
-## Debate verification
+## Safety and workflow coverage
 
-| Area | Result |
+| Control | Status |
 |---|---|
-| Deterministic lifecycle | PASS |
-| Per-agent turn states | PASS |
-| R1/R2/R3 round command path | IMPLEMENTED |
-| One targeted round | PASS in state-machine/core and Tauri guard |
-| Controller-owned claim IDs | PASS |
-| Structured schema validation | PASS |
-| Semantic validation | PASS |
-| Certified repair policies | PASS in fake-executor tests |
-| Raw stdout/stderr retention | IMPLEMENTED |
-| Stateless handoff packet/reconstruction | PASS in core test |
-| Human decision persistence | IMPLEMENTED |
-| Deterministic compiler | PASS |
-| Live three-seat R1/R2/R3 | NOT RUN |
-| Live citation verification against a repository snapshot | NOT RUN |
+| Snapshot byte copy and exclusion | PASS in unit/CLI checks |
+| Secret/config/instruction exclusion | PASS in unit/CLI checks |
+| Reparse/symlink rejection | PASS in snapshot implementation/tests |
+| Native Windows ACL sealing | IMPLEMENTED; live write matrix pending |
+| Packet size/marker handling | PASS in unit tests |
+| WSL bridge avoids `/mnt/c` | PASS in bridge tests and Codex certification evidence |
+| Linux payload hash verification | IMPLEMENTED; live current-host transfer pending |
+| Explicit provider environment allowlist | PASS in provider tests |
+| Antigravity `useG1Credits=false` guard | PASS in provider tests |
+| Codex subscription-only guard | PASS in provider contract and certification evidence |
+| Job Object/process containment | IMPLEMENTED; live provider cancellation pending |
+| `wsl --terminate CouncilCodexWSL` fallback | IMPLEMENTED; live cancellation pending |
+| Deterministic call identity/idempotency | PASS in persistence tests; live crash injection pending |
+| No automatic implementation handoff | PASS |
+| Human final authority | PASS |
 
-## Verification commands and results
+## Remaining runtime gates
 
-Environment:
+These are the only material unverified items after this build pass:
 
-~~~text
-Windows PowerShell
-Rust toolchain: 1.96.0-x86_64-pc-windows-msvc
-CARGO_TARGET_DIR=C:\council-target
-Node: 24.16.0
-npm: 11.13.0
-~~~
+1. Clear the current unsafe billing/routing environment variable without adding an API key, then run the authenticated three-seat provider flow.
+2. Exercise the Tauri IPC commands through the native window, including R1/R2/R3, evidence attachment, human decision, and export.
+3. Run a real repository-grounded round to verify live Windows snapshot creation, WSL transfer, Linux hash comparison, citations, and read-only enforcement.
+4. Run live cancellation, WSL termination fallback, restart persistence, and interrupted-dispatch recovery against the dedicated runtime.
+5. Produce and verify an installer only after the runtime gates pass. Bundling remains intentionally disabled in this checkout.
 
-Commands:
+These gates require safe provider availability or explicit host/runtime access. They are not permission to route through Platform API billing or to weaken the isolation boundary.
 
-~~~powershell
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo check -p council-desktop
-Push-Location app
-npm run build
-Pop-Location
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- providers
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- demo --output .\artifacts\verification-demo
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- verify-evidence .\docs security/BOUNDARY-CONTRACT.md:1-3
-~~~
+## Exact verification commands
 
-Results:
-
-~~~text
-22 Rust core tests passed
-0 Rust tests failed
-Desktop cargo check passed
-React TypeScript check passed
-Vite production build passed
-Synthetic SQLite and packet demo passed
-Exact citation lookup returned VERIFIED_EXACT
-Vite dev server returned HTTP 200 with the expected root shell
-~~~
-
-The frontend build produced app/dist. It is ignored as a generated build output.
-
-## Known limitations and remaining work
-
-These are real limitations, not hidden TODOs:
-
-1. A live provider round was not run because the current environment reported a blocked billing/routing variable. The product correctly refuses to route around that guard.
-2. The Tauri CLI is not installed in this environment. The frontend was built and served through Vite, but the native desktop window, IPC calls, and actual provider availability were not visually smoke-tested.
-3. The desktop intake records an optional repository path, but run_round currently refuses repository-grounded execution until the full snapshot-to-provider context integration is selected. The snapshot and WSL bridge primitives are implemented and tested independently.
-4. The current desktop decision surface retrieves stored positions and displays recommendations/risk summaries, but mechanical evidence-index verification is not yet automatically attached to every live position in the Tauri round command.
-5. Deterministic call IDs are present in persisted attempt identity, but crash recovery does not yet implement a complete running/unknown/completed recovery UI.
-6. Runtime settings are currently inspectable defaults and preflight status. Editing provider binary paths, timeout overrides, and certification records through the Settings screen is not yet implemented.
-7. R0 candidate discovery and independent-only evaluation are represented in the domain direction but are not exposed as separate desktop workflows.
-8. A packaged installer was not produced because Tauri bundling is disabled in the current configuration and the Tauri CLI was unavailable.
-
-## Exact run instructions
-
-### Core and CLI
-
-~~~powershell
+```powershell
 Set-Location 'C:\Users\<USER>\Desktop\VIBE CODING PROJECTS\Council Of Agents'
 $env:CARGO_TARGET_DIR = 'C:\council-target'
+rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace
+rustup run 1.96.0-x86_64-pc-windows-msvc cargo check --workspace
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- providers
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- demo --output .\artifacts\demo
-~~~
-
-### Frontend
-
-~~~powershell
-Set-Location 'C:\Users\<USER>\Desktop\VIBE CODING PROJECTS\Council Of Agents\app'
-npm install
+Push-Location app
 npm run build
-npm run dev -- --host 127.0.0.1
-~~~
+npx tauri --version
+npx tauri dev --no-watch
+Pop-Location
+```
 
-### Native desktop
-
-Install a compatible Tauri 2 CLI in the development environment, then:
-
-~~~powershell
-Set-Location 'C:\Users\<USER>\Desktop\VIBE CODING PROJECTS\Council Of Agents\app'
-npm install
-cargo tauri dev
-~~~
-
-Do not launch a live provider round until the provider status screen shows the required isolated configuration and the billing guard is clear.
-
-## Packaging instructions
-
-Packaging is intentionally not claimed verified. After installing the Tauri 2 CLI and confirming the Windows WebView2/Rust prerequisites:
-
-~~~powershell
-Set-Location 'C:\Users\<USER>\Desktop\VIBE CODING PROJECTS\Council Of Agents\app'
-npm run build
-cargo tauri build
-~~~
-
-Before enabling distribution, set the Tauri bundle configuration, run the native desktop smoke test, verify application-data export paths, and repeat provider preflight on the target host.
-
-## Portfolio-ready description
-
-Council of Agents is a local-first Windows technical deliberation system that coordinates Claude Code, Antigravity CLI, and Codex through a dedicated WSL isolation boundary. A deterministic Rust core manages immutable evidence packets, provider safety, stateless multi-round reasoning, structured outputs, repair/quarantine policy, append-only audit history, and a human decision gate. The Tauri/React command center makes provider identity limitations, dissent, packet hashes, and final export provenance visible without giving the Council any ability to modify code or autonomously hand off implementation.
+Do not start a live provider round until the provider status gate reports safe subscription-only routing and the required isolated configurations are available.
 
 ## Closeout
 
-The implementation is committed as a coherent initial repository snapshot. No external repository, account, provider configuration, credentials, or billing setting was modified by this build.
+The V1 implementation is verified locally with a declared live-runtime blocker. M1 remains unopened. No external repository, provider configuration, account, credential, billing setting, or public release was modified by this pass.

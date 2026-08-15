@@ -7,8 +7,8 @@ use thiserror::Error;
 
 use crate::evidence::VerifiedEvidence;
 use crate::model::{
-    Debate, DebateState, DecisionRecord, ProviderConfig, ProviderKind, ProviderPosition,
-    ServingIdentityStatus, TurnState,
+    Debate, DebateState, DecisionRecord, ModelSelection, ProviderConfig, ProviderKind,
+    ProviderPosition, ServingIdentityStatus, TurnState, new_id,
 };
 use crate::packet::WrittenPacket;
 use crate::providers::ProviderCallResult;
@@ -25,6 +25,8 @@ pub enum DatabaseError {
     Transition(#[from] crate::state::StateTransitionError),
     #[error("debate not found: {0}")]
     DebateNotFound(String),
+    #[error("immutable record conflict: {0}")]
+    Conflict(String),
 }
 
 pub struct Database {
@@ -57,6 +59,8 @@ impl Database {
               state TEXT NOT NULL,
               intake_json TEXT NOT NULL,
               council_size INTEGER NOT NULL,
+              independent_only INTEGER NOT NULL DEFAULT 0,
+              discovery_json TEXT,
               provider_models_json TEXT NOT NULL DEFAULT '{}',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
@@ -66,12 +70,25 @@ impl Database {
               config_json TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS provider_certifications (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               provider_slug TEXT NOT NULL,
               status TEXT NOT NULL,
               evidence TEXT,
               observed_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS discovery_proposals (
+              id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              provider_slug TEXT NOT NULL,
+              proposal_json TEXT NOT NULL,
+              raw_artifact_id TEXT NOT NULL,
+              created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS turns (
               id TEXT PRIMARY KEY,
@@ -96,6 +113,18 @@ impl Database {
               wall_ms INTEGER,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dispatch_intents (
+              call_id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              turn_id TEXT NOT NULL REFERENCES turns(id),
+              round INTEGER NOT NULL,
+              provider_slug TEXT NOT NULL,
+              attempt_number INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              result_artifact_id TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS positions (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               turn_id TEXT NOT NULL REFERENCES turns(id),
@@ -111,6 +140,7 @@ impl Database {
             );
             CREATE TABLE IF NOT EXISTS claim_relations (
               id TEXT PRIMARY KEY,
+              position_id INTEGER REFERENCES positions(id),
               source_claim_id TEXT NOT NULL,
               target_claim_id TEXT,
               relation TEXT NOT NULL,
@@ -125,6 +155,7 @@ impl Database {
               resolved_range TEXT,
               content TEXT NOT NULL,
               content_hash TEXT NOT NULL,
+              file_hash TEXT,
               verdict TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS snapshots (
@@ -202,6 +233,13 @@ impl Database {
               detail TEXT NOT NULL,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS evaluation_metrics (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              round INTEGER NOT NULL,
+              metrics_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS audit_events (
               sequence INTEGER PRIMARY KEY AUTOINCREMENT,
               debate_id TEXT,
@@ -224,20 +262,40 @@ impl Database {
             [],
         );
         let _ = self.connection.execute(
+            "ALTER TABLE debates ADD COLUMN independent_only INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = self
+            .connection
+            .execute("ALTER TABLE debates ADD COLUMN discovery_json TEXT", []);
+        let _ = self.connection.execute(
             "ALTER TABLE context_packets ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'",
             [],
         );
+        let _ = self.connection.execute(
+            "ALTER TABLE claim_relations ADD COLUMN position_id INTEGER REFERENCES positions(id)",
+            [],
+        );
+        let _ = self
+            .connection
+            .execute("ALTER TABLE evidence ADD COLUMN file_hash TEXT", []);
         Ok(())
     }
 
     pub fn create_debate(&self, debate: &Debate) -> Result<(), DatabaseError> {
         self.connection.execute(
-            "INSERT INTO debates (id, state, intake_json, council_size, provider_models_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO debates (id, state, intake_json, council_size, independent_only, discovery_json, provider_models_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 debate.id,
                 serde_json::to_string(&debate.state)?,
                 serde_json::to_string(&debate.intake)?,
                 debate.council_size,
+                debate.independent_only,
+                debate
+                    .discovery
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?,
                 serde_json::to_string(&debate.provider_models)?,
                 debate.created_at.to_rfc3339(),
                 debate.updated_at.to_rfc3339()
@@ -255,7 +313,7 @@ impl Database {
         let row = self
             .connection
             .query_row(
-                "SELECT id, state, intake_json, council_size, provider_models_json, created_at, updated_at FROM debates WHERE id = ?1",
+                "SELECT id, state, intake_json, council_size, independent_only, discovery_json, provider_models_json, created_at, updated_at FROM debates WHERE id = ?1",
                 params![debate_id],
                 |row| {
                     Ok((
@@ -263,9 +321,11 @@ impl Database {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, u8>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
+                        row.get::<_, bool>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                         row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
                     ))
                 },
             )
@@ -276,7 +336,7 @@ impl Database {
 
     pub fn list_debates(&self, limit: u32) -> Result<Vec<Debate>, DatabaseError> {
         let mut statement = self.connection.prepare(
-            "SELECT id, state, intake_json, council_size, provider_models_json, created_at, updated_at FROM debates ORDER BY created_at DESC LIMIT ?1",
+            "SELECT id, state, intake_json, council_size, independent_only, discovery_json, provider_models_json, created_at, updated_at FROM debates ORDER BY created_at DESC LIMIT ?1",
         )?;
         let rows = statement.query_map(params![limit], |row| {
             Ok((
@@ -284,9 +344,11 @@ impl Database {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, u8>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
+                row.get::<_, bool>(4)?,
+                row.get::<_, Option<String>>(5)?,
                 row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, String>(8)?,
             ))
         })?;
         let rows = rows.collect::<Result<Vec<_>, _>>()?;
@@ -360,6 +422,29 @@ impl Database {
                 ],
             )?;
         }
+        for (index, response) in position.position.peer_responses.iter().enumerate() {
+            let relation_id = new_id("relation");
+            let source_claim_id = if response.peer_claim_reference.trim().is_empty() {
+                format!(
+                    "PEER-REF-{}-{:03}",
+                    position.turn_id.to_uppercase(),
+                    index + 1
+                )
+            } else {
+                response.peer_claim_reference.clone()
+            };
+            transaction.execute(
+                "INSERT INTO claim_relations (id, position_id, source_claim_id, target_claim_id, relation, reason, evidence_json) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
+                params![
+                    relation_id,
+                    position_id,
+                    source_claim_id,
+                    serde_json::to_string(&response.classification)?,
+                    response.reason,
+                    serde_json::to_string(&response.evidence)?
+                ],
+            )?;
+        }
         transaction.commit()?;
         Ok(position_id)
     }
@@ -424,6 +509,64 @@ impl Database {
         Ok(latest.into_values().collect())
     }
 
+    pub fn all_provider_positions(
+        &self,
+        debate_id: &str,
+    ) -> Result<Vec<ProviderPosition>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT t.provider_slug, t.round, t.id, t.requested_model,
+                    t.reported_served_model, t.serving_identity_status,
+                    p.position_json,
+                    COALESCE((SELECT ra.id FROM raw_artifacts ra
+                              WHERE ra.turn_id = t.id
+                              ORDER BY ra.created_at DESC LIMIT 1), '')
+             FROM positions p
+             JOIN turns t ON t.id = p.turn_id
+             WHERE t.debate_id = ?1 AND p.accepted = 1
+             ORDER BY t.round ASC, p.id ASC",
+        )?;
+        let rows = statement.query_map(params![debate_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u8>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+            ))
+        })?;
+        let rows = rows.collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(
+                |(
+                    provider_slug,
+                    round,
+                    turn_id,
+                    requested_model,
+                    reported_served_model,
+                    serving_identity_status,
+                    position_json,
+                    raw_artifact_id,
+                )| {
+                    let provider = ProviderKind::from_slug(&provider_slug)
+                        .ok_or_else(|| DatabaseError::DebateNotFound(provider_slug.clone()))?;
+                    Ok(ProviderPosition {
+                        provider,
+                        round,
+                        turn_id,
+                        position: serde_json::from_str(&position_json)?,
+                        raw_artifact_id,
+                        requested_model,
+                        reported_served_model,
+                        serving_identity_status: serde_json::from_str(&serving_identity_status)?,
+                    })
+                },
+            )
+            .collect()
+    }
+
     pub fn save_provider_config(&self, config: &ProviderConfig) -> Result<(), DatabaseError> {
         self.connection.execute(
             "INSERT OR REPLACE INTO providers (slug, config_json, updated_at) VALUES (?1, ?2, ?3)",
@@ -434,6 +577,95 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn provider_configs(&self) -> Result<Vec<ProviderConfig>, DatabaseError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT config_json FROM providers ORDER BY slug")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| {
+            let value = row?;
+            serde_json::from_str(&value).map_err(DatabaseError::from)
+        })
+        .collect()
+    }
+
+    pub fn save_app_setting(&self, key: &str, value: &str) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)",
+            params![key, value, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_app_setting(&self, key: &str) -> Result<Option<String>, DatabaseError> {
+        self.connection
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)
+    }
+
+    pub fn save_discovery_result(
+        &self,
+        debate_id: &str,
+        result: &crate::discovery::DiscoveryResult,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "UPDATE debates SET discovery_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![
+                serde_json::to_string(result)?,
+                Utc::now().to_rfc3339(),
+                debate_id
+            ],
+        )?;
+        self.append_audit_event(
+            Some(debate_id),
+            "R0_CANDIDATE_UNION_CREATED",
+            serde_json::to_value(result)?,
+        )?;
+        for proposal in &result.proposals {
+            self.save_discovery_proposal(debate_id, proposal)?;
+        }
+        Ok(())
+    }
+
+    pub fn save_discovery_proposal(
+        &self,
+        debate_id: &str,
+        proposal: &crate::discovery::DiscoveryProposal,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO discovery_proposals (id, debate_id, provider_slug, proposal_json, raw_artifact_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                proposal.turn_id,
+                debate_id,
+                proposal.provider.slug(),
+                serde_json::to_string(proposal)?,
+                proposal.raw_artifact_id,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn discovery_proposals(
+        &self,
+        debate_id: &str,
+    ) -> Result<Vec<crate::discovery::DiscoveryProposal>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT proposal_json FROM discovery_proposals WHERE debate_id = ?1 ORDER BY created_at, id",
+        )?;
+        let rows = statement.query_map(params![debate_id], |row| row.get::<_, String>(0))?;
+        rows.map(|row| {
+            let value = row?;
+            serde_json::from_str(&value).map_err(DatabaseError::from)
+        })
+        .collect()
     }
 
     pub fn record_preflight(
@@ -505,6 +737,78 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn create_dispatch_intent(
+        &self,
+        call_id: &str,
+        debate_id: &str,
+        turn_id: &str,
+        round: u8,
+        provider: &ProviderKind,
+        attempt_number: u8,
+    ) -> Result<(), DatabaseError> {
+        let now = Utc::now().to_rfc3339();
+        self.connection.execute(
+            "INSERT OR IGNORE INTO dispatch_intents (call_id, debate_id, turn_id, round, provider_slug, attempt_number, status, result_artifact_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'NOT_DISPATCHED', NULL, ?7, ?7)",
+            params![
+                call_id,
+                debate_id,
+                turn_id,
+                round,
+                provider.slug(),
+                attempt_number,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_dispatch_running(&self, call_id: &str) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "UPDATE dispatch_intents SET status = 'RUNNING', updated_at = ?1 WHERE call_id = ?2 AND status = 'NOT_DISPATCHED'",
+            params![Utc::now().to_rfc3339(), call_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_dispatch_complete(
+        &self,
+        call_id: &str,
+        result_artifact_id: Option<&str>,
+        status: &str,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "UPDATE dispatch_intents SET status = ?1, result_artifact_id = ?2, updated_at = ?3 WHERE call_id = ?4",
+            params![status, result_artifact_id, Utc::now().to_rfc3339(), call_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn recover_inflight_dispatches(&self) -> Result<u64, DatabaseError> {
+        let changed = self.connection.execute(
+            "UPDATE dispatch_intents SET status = 'RUNNING_UNKNOWN', updated_at = ?1 WHERE status = 'RUNNING'",
+            params![Utc::now().to_rfc3339()],
+        )?;
+        if changed > 0 {
+            self.append_audit_event(
+                None,
+                "DISPATCH_RECOVERY_REQUIRED",
+                json!({"running_unknown": changed}),
+            )?;
+        }
+        Ok(changed as u64)
+    }
+
+    pub fn dispatch_status(&self, call_id: &str) -> Result<Option<String>, DatabaseError> {
+        self.connection
+            .query_row(
+                "SELECT status FROM dispatch_intents WHERE call_id = ?1",
+                params![call_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(DatabaseError::from)
     }
 
     pub fn save_raw_artifact(
@@ -606,7 +910,7 @@ impl Database {
         evidence: &VerifiedEvidence,
     ) -> Result<(), DatabaseError> {
         self.connection.execute(
-            "INSERT INTO evidence (debate_id, file, requested_range, resolved_range, content, content_hash, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO evidence (debate_id, file, requested_range, resolved_range, content, content_hash, file_hash, verdict) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 debate_id,
                 evidence.file,
@@ -614,8 +918,83 @@ impl Database {
                 evidence.resolved_range,
                 evidence.content,
                 evidence.content_hash,
+                evidence.file_hash,
                 serde_json::to_string(&evidence.verdict)?
             ],
+        )?;
+        Ok(())
+    }
+
+    pub fn evidence_for_debate(
+        &self,
+        debate_id: &str,
+    ) -> Result<Vec<VerifiedEvidence>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT file, requested_range, resolved_range, content, content_hash, file_hash, verdict FROM evidence WHERE debate_id = ?1 ORDER BY id",
+        )?;
+        let rows = statement.query_map(params![debate_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (file, requested_range, resolved_range, content, content_hash, file_hash, verdict) =
+                row?;
+            Ok(VerifiedEvidence {
+                file,
+                requested_range,
+                resolved_range,
+                content,
+                content_hash,
+                file_hash,
+                verdict: serde_json::from_str(&verdict)?,
+            })
+        })
+        .collect()
+    }
+
+    pub fn latest_snapshot(
+        &self,
+        debate_id: &str,
+    ) -> Result<Option<(std::path::PathBuf, SnapshotManifest)>, DatabaseError> {
+        let row = self.connection.query_row(
+            "SELECT root, manifest_json FROM snapshots WHERE debate_id = ?1 ORDER BY created_at DESC LIMIT 1",
+            params![debate_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+        row.map(|(root, manifest)| {
+            Ok((
+                std::path::PathBuf::from(root),
+                serde_json::from_str(&manifest)?,
+            ))
+        })
+        .transpose()
+    }
+
+    pub fn update_debate_provider_models(
+        &self,
+        debate_id: &str,
+        provider_models: &std::collections::BTreeMap<ProviderKind, ModelSelection>,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "UPDATE debates SET provider_models_json = ?1, council_size = ?2, updated_at = ?3 WHERE id = ?4",
+            params![
+                serde_json::to_string(provider_models)?,
+                provider_models.len() as u8,
+                Utc::now().to_rfc3339(),
+                debate_id
+            ],
+        )?;
+        self.append_audit_event(
+            Some(debate_id),
+            "COUNCIL_SIZE_CHANGED",
+            json!({"council_size": provider_models.len(), "providers": provider_models.keys().map(ProviderKind::slug).collect::<Vec<_>>() }),
         )?;
         Ok(())
     }
@@ -628,9 +1007,37 @@ impl Database {
         path: &Path,
         content_hash: &str,
     ) -> Result<(), DatabaseError> {
+        let path_text = path.to_string_lossy().to_string();
+        let existing = self
+            .connection
+            .query_row(
+                "SELECT debate_id, kind, path, content_hash FROM exports WHERE id = ?1",
+                params![export_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        if let Some((existing_debate, existing_kind, existing_path, existing_hash)) = existing {
+            if existing_debate == debate_id
+                && existing_kind == kind
+                && existing_path == path_text
+                && existing_hash == content_hash
+            {
+                return Ok(());
+            }
+            return Err(DatabaseError::Conflict(format!(
+                "export {export_id} already exists with different content"
+            )));
+        }
         self.connection.execute(
             "INSERT INTO exports (id, debate_id, kind, path, content_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![export_id, debate_id, kind, path.to_string_lossy(), content_hash, Utc::now().to_rfc3339()],
+            params![export_id, debate_id, kind, path_text, content_hash, Utc::now().to_rfc3339()],
         )?;
         Ok(())
     }
@@ -649,13 +1056,27 @@ impl Database {
     }
 
     pub fn save_decision(&self, record: &DecisionRecord) -> Result<(), DatabaseError> {
+        let decision_json = serde_json::to_string(record)?;
+        let existing = self
+            .connection
+            .query_row(
+                "SELECT decision_json FROM decisions WHERE debate_id = ?1",
+                params![record.debate.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            if existing == decision_json {
+                return Ok(());
+            }
+            return Err(DatabaseError::Conflict(format!(
+                "decision for debate {} is immutable",
+                record.debate.id
+            )));
+        }
         self.connection.execute(
-            "INSERT OR REPLACE INTO decisions (debate_id, decision_json, created_at) VALUES (?1, ?2, ?3)",
-            params![
-                record.debate.id,
-                serde_json::to_string(record)?,
-                Utc::now().to_rfc3339()
-            ],
+            "INSERT INTO decisions (debate_id, decision_json, created_at) VALUES (?1, ?2, ?3)",
+            params![record.debate.id, decision_json, Utc::now().to_rfc3339()],
         )?;
         self.append_audit_event(
             Some(&record.debate.id),
@@ -663,6 +1084,50 @@ impl Database {
             serde_json::to_value(&record.human_decision)?,
         )?;
         Ok(())
+    }
+
+    pub fn load_decision(&self, debate_id: &str) -> Result<Option<DecisionRecord>, DatabaseError> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT decision_json FROM decisions WHERE debate_id = ?1",
+                params![debate_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        value
+            .map(|value| serde_json::from_str(&value).map_err(DatabaseError::from))
+            .transpose()
+    }
+
+    pub fn save_evaluation_metrics(
+        &self,
+        metrics: &crate::model::EvaluationMetrics,
+    ) -> Result<(), DatabaseError> {
+        self.connection.execute(
+            "INSERT INTO evaluation_metrics (debate_id, round, metrics_json, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                metrics.debate_id,
+                metrics.round,
+                serde_json::to_string(metrics)?,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn evaluation_metrics(
+        &self,
+        debate_id: &str,
+    ) -> Result<Vec<crate::model::EvaluationMetrics>, DatabaseError> {
+        let mut statement = self.connection.prepare(
+            "SELECT metrics_json FROM evaluation_metrics WHERE debate_id = ?1 ORDER BY round, id",
+        )?;
+        let rows = statement.query_map(params![debate_id], |row| row.get::<_, String>(0))?;
+        let rows = rows.collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|value| serde_json::from_str(&value).map_err(DatabaseError::from))
+            .collect()
     }
 
     pub fn append_audit_event(
@@ -718,15 +1183,27 @@ impl Database {
 }
 
 fn deserialize_debate_row(
-    row: (String, String, String, u8, String, String, String),
+    row: (
+        String,
+        String,
+        String,
+        u8,
+        bool,
+        Option<String>,
+        String,
+        String,
+        String,
+    ),
 ) -> Result<Debate, DatabaseError> {
     Ok(Debate {
         id: row.0,
         state: serde_json::from_str(&row.1)?,
         intake: serde_json::from_str(&row.2)?,
         council_size: row.3,
-        provider_models: serde_json::from_str(&row.4)?,
-        created_at: chrono::DateTime::parse_from_rfc3339(&row.5)
+        independent_only: row.4,
+        discovery: row.5.as_deref().map(serde_json::from_str).transpose()?,
+        provider_models: serde_json::from_str(&row.6)?,
+        created_at: chrono::DateTime::parse_from_rfc3339(&row.7)
             .map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -735,7 +1212,7 @@ fn deserialize_debate_row(
                 )
             })?
             .with_timezone(&Utc),
-        updated_at: chrono::DateTime::parse_from_rfc3339(&row.6)
+        updated_at: chrono::DateTime::parse_from_rfc3339(&row.8)
             .map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -751,7 +1228,8 @@ fn deserialize_debate_row(
 mod tests {
     use super::*;
     use crate::model::{
-        Claim, Commitment, Debate, Intake, ModelSelection, Position, ProviderKind, Reversibility,
+        Claim, Commitment, Debate, Intake, ModelSelection, PeerResponse,
+        PeerResponseClassification, Position, ProviderKind, Reversibility,
     };
     use std::collections::BTreeMap;
 
@@ -827,6 +1305,18 @@ mod tests {
                 what_my_recommendation_is_bad_at: String::new(),
                 acceptance_criteria: Vec::new(),
                 implementation_constraints: Vec::new(),
+                peer_responses: vec![PeerResponse {
+                    peer_claim_reference: "PEER-CLAIM-1-001".to_string(),
+                    classification: PeerResponseClassification::Dispute,
+                    reason: "The peer's scale assumption is not supported by the packet."
+                        .to_string(),
+                    evidence: vec!["packet.md:1-2".to_string()],
+                }],
+                withdrawn_claims: Vec::new(),
+                conceded_claims: Vec::new(),
+                remaining_disputes: Vec::new(),
+                revision_reason: None,
+                prior_position_hash: None,
             },
             raw_artifact_id: "raw-1".to_string(),
             requested_model: "gpt-5.6-luna".to_string(),
@@ -834,6 +1324,15 @@ mod tests {
             serving_identity_status: ServingIdentityStatus::ProviderDoesNotReport,
         };
         database.save_provider_position(&position).unwrap();
+        let stored_reference: String = database
+            .connection
+            .query_row(
+                "SELECT source_claim_id FROM claim_relations WHERE position_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_reference, "PEER-CLAIM-1-001");
         let loaded = database.latest_provider_positions(&debate.id).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(
@@ -841,5 +1340,116 @@ mod tests {
             position.position.recommendation
         );
         assert_eq!(loaded[0].round, 3);
+    }
+
+    #[test]
+    fn dispatch_intents_are_idempotent_and_recovery_is_fail_closed() {
+        let database = Database::in_memory().unwrap();
+        let models = BTreeMap::from([(
+            ProviderKind::Claude,
+            ModelSelection::requested("test-model"),
+        )]);
+        let debate = Debate::new(Intake::default(), models);
+        database.create_debate(&debate).unwrap();
+        let config = ProviderConfig::defaults()
+            .into_iter()
+            .find(|config| config.provider == ProviderKind::Claude)
+            .unwrap();
+        database
+            .create_turn(
+                "turn-intent",
+                &debate.id,
+                1,
+                &config,
+                TurnState::Pending,
+                None,
+            )
+            .unwrap();
+        database
+            .create_dispatch_intent(
+                "call-intent",
+                &debate.id,
+                "turn-intent",
+                1,
+                &ProviderKind::Claude,
+                1,
+            )
+            .unwrap();
+        assert_eq!(
+            database.dispatch_status("call-intent").unwrap().as_deref(),
+            Some("NOT_DISPATCHED")
+        );
+        database.mark_dispatch_running("call-intent").unwrap();
+        assert_eq!(database.recover_inflight_dispatches().unwrap(), 1);
+        assert_eq!(
+            database.dispatch_status("call-intent").unwrap().as_deref(),
+            Some("RUNNING_UNKNOWN")
+        );
+        database
+            .mark_dispatch_complete("call-intent", Some("raw-intent"), "COMPLETED")
+            .unwrap();
+        database
+            .create_dispatch_intent(
+                "call-intent",
+                &debate.id,
+                "turn-intent",
+                1,
+                &ProviderKind::Claude,
+                1,
+            )
+            .unwrap();
+        assert_eq!(
+            database.dispatch_status("call-intent").unwrap().as_deref(),
+            Some("COMPLETED")
+        );
+    }
+
+    #[test]
+    fn settings_and_exports_are_idempotent_but_not_overwritable() {
+        let database = Database::in_memory().unwrap();
+        database
+            .save_app_setting("export_directory", "C:/council/exports")
+            .unwrap();
+        assert_eq!(
+            database
+                .load_app_setting("export_directory")
+                .unwrap()
+                .as_deref(),
+            Some("C:/council/exports")
+        );
+        let models = BTreeMap::from([(
+            ProviderKind::Claude,
+            ModelSelection::requested("test-model"),
+        )]);
+        let debate = Debate::new(Intake::default(), models);
+        database.create_debate(&debate).unwrap();
+        database
+            .save_export(
+                "export-1",
+                &debate.id,
+                "MASTER_PROMPT",
+                Path::new("C:/council/master.md"),
+                "hash-1",
+            )
+            .unwrap();
+        database
+            .save_export(
+                "export-1",
+                &debate.id,
+                "MASTER_PROMPT",
+                Path::new("C:/council/master.md"),
+                "hash-1",
+            )
+            .unwrap();
+        assert!(matches!(
+            database.save_export(
+                "export-1",
+                &debate.id,
+                "MASTER_PROMPT",
+                Path::new("C:/council/master.md"),
+                "different"
+            ),
+            Err(DatabaseError::Conflict(_))
+        ));
     }
 }

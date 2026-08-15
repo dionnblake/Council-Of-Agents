@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 use council_core::{
     ContextPacket, Database, EvidenceIndex, Intake, ModelSelection, ProviderKind, ProviderRegistry,
-    SnapshotBuilder, SnapshotRequest, billing_environment_status, compile_decision_record,
-    compile_master_prompt, validate_intake,
+    SnapshotBuilder, SnapshotRequest, billing_environment_status, build_r0_candidate_union,
+    compile_decision_record, compile_master_prompt, validate_intake,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -27,6 +27,9 @@ enum Command {
         database: PathBuf,
     },
     ValidateIntake {
+        input: PathBuf,
+    },
+    Benchmark {
         input: PathBuf,
     },
     Snapshot {
@@ -93,6 +96,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     std::process::exit(2);
                 }
+            }
+        }
+        Command::Benchmark { input } => {
+            let intakes: Vec<Intake> = serde_json::from_slice(&fs::read(&input)?)?;
+            let mut invalid = 0_u32;
+            for (index, intake) in intakes.iter().enumerate() {
+                match validate_intake(intake) {
+                    Ok(()) => {
+                        if matches!(
+                            (&intake.mode, &intake.decision_type),
+                            (
+                                council_core::DebateMode::Discovery,
+                                council_core::DecisionType::Stack
+                            )
+                        ) && intake.options.is_empty()
+                        {
+                            let discovery = build_r0_candidate_union(intake);
+                            println!(
+                                "SCENARIO_{}\tVALID\tR0_CANDIDATES={}",
+                                index + 1,
+                                discovery.candidates.len()
+                            );
+                        } else {
+                            println!("SCENARIO_{}\tVALID", index + 1);
+                        }
+                    }
+                    Err(errors) => {
+                        invalid += 1;
+                        println!("SCENARIO_{}\tINVALID\t{}", index + 1, errors.join(" | "));
+                    }
+                }
+            }
+            println!(
+                "BENCHMARK_VALID {}/{}",
+                intakes.len() - invalid as usize,
+                intakes.len()
+            );
+            if invalid > 0 {
+                std::process::exit(2);
             }
         }
         Command::Snapshot {

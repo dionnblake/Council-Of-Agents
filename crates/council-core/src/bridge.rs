@@ -50,7 +50,9 @@ pub struct BridgeVerification {
 pub enum BridgeError {
     #[error("Windows snapshot root does not exist: {0}")]
     MissingSource(PathBuf),
-    #[error("Linux destination must be an absolute path under /home/council/council/snap: {0}")]
+    #[error(
+        "Linux destination must be under /home/council/council/snap or /home/council/council/packet: {0}"
+    )]
     InvalidLinuxDestination(String),
     #[error("Linux destination must not contain traversal segments")]
     Traversal,
@@ -145,7 +147,9 @@ pub fn verify_bridge_manifests(
 }
 
 fn validate_linux_destination(destination: &str) -> Result<(), BridgeError> {
-    if !destination.starts_with("/home/council/council/snap/") {
+    if !destination.starts_with("/home/council/council/snap/")
+        && !destination.starts_with("/home/council/council/packet/")
+    {
         return Err(BridgeError::InvalidLinuxDestination(
             destination.to_string(),
         ));

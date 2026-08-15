@@ -42,6 +42,12 @@ pub struct ProviderCallRequest {
     pub linux_working_directory: Option<PathBuf>,
     #[serde(default)]
     pub linux_schema_path: Option<PathBuf>,
+    #[serde(default)]
+    pub snapshot_path: Option<PathBuf>,
+    #[serde(default)]
+    pub linux_snapshot_path: Option<PathBuf>,
+    #[serde(default)]
+    pub snapshot_manifest_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,6 +138,9 @@ impl ProviderRegistry {
                 .and_then(Value::as_bool);
             if allowed != Some(false) {
                 return Err(ProviderError::AntigravityCreditGuard);
+            }
+            if let Some(path) = config.safety_config_path.as_deref() {
+                antigravity_credit_guard_from_json(path)?;
             }
         }
         if matches!(provider, ProviderKind::CodexWsl) {
@@ -235,6 +244,13 @@ fn build_codex_command(
             "Codex prompt must explicitly reference the Linux packet path".to_string(),
         ));
     }
+    if let Some(snapshot_path) = request.linux_snapshot_path.as_deref()
+        && !request.prompt.contains(&linux_path(snapshot_path))
+    {
+        return Err(ProviderError::InvalidConfiguration(
+            "Codex prompt must explicitly reference the Linux snapshot path".to_string(),
+        ));
+    }
     let mut args = vec![
         "-d".to_string(),
         distribution.to_string(),
@@ -294,6 +310,8 @@ fn build_claude_command(
         "--no-session-persistence".to_string(),
         "--setting-sources".to_string(),
         "local".to_string(),
+        "--permission-mode".to_string(),
+        "plan".to_string(),
         "--output-format".to_string(),
         "json".to_string(),
         "--json-schema".to_string(),
@@ -484,6 +502,9 @@ mod tests {
             linux_packet_path: Some(PathBuf::from("/home/council/council/packet/one.md")),
             linux_working_directory: Some(PathBuf::from("/home/council/council/scratch")),
             linux_schema_path: Some(PathBuf::from("/home/council/council/schema.json")),
+            snapshot_path: None,
+            linux_snapshot_path: None,
+            snapshot_manifest_hash: None,
         };
         let command = registry.build_command(&request).unwrap();
         assert_eq!(command.program, PathBuf::from("wsl.exe"));

@@ -9,6 +9,7 @@ pub enum DebateEvent {
     SnapshotReady,
     OpeningStarted,
     OpeningComplete,
+    IndependentOpeningComplete,
     CrossExaminationStarted,
     CrossExaminationComplete,
     FinalPositionsStarted,
@@ -87,7 +88,10 @@ fn next_state(state: &DebateState, event: &DebateEvent) -> Option<DebateState> {
         (Preflight, SnapshotStarted) => Some(Snapshotting),
         (Snapshotting, SnapshotReady) => Some(Ready),
         (Ready, OpeningStarted) => Some(Opening),
+        (Ready, CrossExaminationStarted) => Some(CrossExamination),
+        (Ready, FinalPositionsStarted) => Some(FinalPositions),
         (Opening, OpeningComplete) => Some(CrossExamination),
+        (Opening, IndependentOpeningComplete) => Some(AwaitingHumanDecision),
         (CrossExamination, CrossExaminationStarted) => Some(CrossExamination),
         (CrossExamination, CrossExaminationComplete) => Some(FinalPositions),
         (FinalPositions, FinalPositionsStarted) => Some(FinalPositions),
@@ -188,6 +192,18 @@ mod tests {
             machine
                 .transition(DebateEvent::TargetedRoundRequested)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn independent_opening_stops_at_human_gate() {
+        let mut machine = DebateStateMachine::new(DebateState::Ready);
+        machine.transition(DebateEvent::OpeningStarted).unwrap();
+        assert_eq!(
+            machine
+                .transition(DebateEvent::IndependentOpeningComplete)
+                .unwrap(),
+            DebateState::AwaitingHumanDecision
         );
     }
 }

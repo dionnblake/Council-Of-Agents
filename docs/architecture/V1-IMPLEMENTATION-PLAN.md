@@ -25,11 +25,11 @@
 
 ## Current implementation posture
 
-Units 1 through 9 have a working local implementation and automated coverage. The Tauri bridge exposes explicit round dispatch, but the desktop runtime has not been live-smoked in this environment because the Tauri CLI is not installed. The frontend is production-build verified and the Vite shell responds locally.
+Units 1 through 9 have a working local implementation and automated coverage. The Tauri bridge exposes explicit round dispatch, repository snapshot creation, Linux snapshot verification, evidence attachment, recovery status, R0 candidate discovery, independent-only evaluation, explicit degraded-seat continuation, and deterministic export. The native Tauri 2 shell was built and smoke-launched successfully in the current environment; IPC/provider dispatch remains intentionally unrun.
 
-The controller refuses repository-grounded execution until an explicit snapshot bridge is selected. Synthetic packet runs are supported and are the safe default for local smoke checks.
+Repository-grounded execution creates or reloads a sanitized Council-owned snapshot and dispatches only from that snapshot. Synthetic packet runs remain available for safe local checks. Snapshot, packet, and schema hashes are persisted and checked before provider dispatch, with Codex payloads bridged into the dedicated WSL distribution without mounting the Windows repository.
 
-Live provider execution remains opt-in. The current process environment reports a blocked billing variable, so no authenticated provider round was attempted during this build. The controller must continue to reject that environment rather than route through Platform API billing.
+Live provider execution remains opt-in. The current process environment reports a blocked billing/routing variable, so no authenticated provider round was attempted during this build. The controller must continue to reject that environment rather than route through Platform API billing. M0.8 certification evidence for the three seats is carried forward separately, but a current-host live round is still an explicit runtime gate.
 
 ## Verification posture
 

@@ -28,7 +28,7 @@ The Council does not edit a repository, create branches, commit, push, deploy, o
 - Symlinks and Windows reparse points are rejected.
 - The manifest records file size and SHA-256.
 - The snapshot is sealed read-only; Windows ACLs are applied through the native security API, not icacls.
-- The current desktop run_round path refuses repository-grounded intake until the snapshot bridge is explicitly selected. This is fail-closed, not an implicit direct-repository fallback.
+- The desktop run_round path creates or reloads a Council-owned sanitized snapshot before repository-grounded dispatch. A missing snapshot, secret review gate, hash mismatch, or bridge failure stops the round; there is no direct-repository fallback.
 
 ## Packet boundary
 
@@ -36,7 +36,7 @@ The Council does not edit a repository, create branches, commit, push, deploy, o
 - Provider prompts contain a short packet reference, not the full packet body.
 - Each provider receives a fresh process. No resume or hidden provider session is used.
 - Codex payloads are streamed through tar.exe into the dedicated WSL distribution over stdin. The real Windows repository is not mounted.
-- Codex packet and schema hashes are checked from inside WSL before dispatch.
+- Codex snapshot, packet, and schema hashes are checked from inside WSL before dispatch. The Linux snapshot is sealed read-only and scratch is separate.
 
 ## Provider boundaries
 
@@ -64,6 +64,8 @@ The controller rejects configured API keys, custom provider URLs, and alternate 
 - Antigravity is allowed one repair attempt because that is the certified seat policy.
 - An incomplete three-seat round is quarantined and cannot advance the debate.
 - A targeted round is human-requested and capped at one.
+- If a seat is unavailable, the human may explicitly proceed with at least two remaining seats and a persisted rationale; the controller never silently shrinks the council.
+- Independent-only evaluation stops after the opening positions and records deterministic evaluation metrics without treating the result as a production council decision.
 - Process timeout uses Windows Job Object containment, with the dedicated Codex WSL distribution termination as the hard fallback.
 
 ## Human authority
@@ -72,4 +74,4 @@ Provider output is advisory. Majority is not authority. The human decision is re
 
 ## Evidence status
 
-The M0.8 records prove the dedicated Codex WSL seat in its certification environment. They do not prove that every future host has the same WSL distribution, authentication, or provider availability. The V1 runtime therefore performs preflight on the current host and keeps unavailable seats visible.
+The M0.8 records prove the dedicated Codex WSL seat in its certification environment. They do not prove that every future host has the same WSL distribution, authentication, or provider availability. The V1 runtime therefore performs preflight on the current host, keeps unavailable seats visible, and requires an explicit degraded-mode choice before continuing.
