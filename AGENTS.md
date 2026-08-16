@@ -71,6 +71,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - skills/AGENTS.md owns the five reasoning-only skill packages and their child contracts.
 - fixtures/AGENTS.md owns synthetic validation inputs.
 - artifacts/AGENTS.md owns generated demo and evidence outputs.
+- scripts/AGENTS.md owns deterministic public-repository privacy checks.
 - parallel/product-design-evaluation/AGENTS.md owns the parallel product, design, evaluation, security, and synthetic mock-debate specification package.
 - Feasibility and certification findings at the repository root remain owned by this root contract.
 
