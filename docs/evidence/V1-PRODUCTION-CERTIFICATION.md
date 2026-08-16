@@ -2,6 +2,7 @@
 
 Date: 2026-08-16
 Audited starting commit: `189f867a600633ce80be8b392959af0920b2c5d7`
+Implementation and certification closeout commit: `d06aa73231f869ac1d5ca6cd1d59a584c250954c`
 M1: `NOT_STARTED`
 
 This record separates implementation evidence, automated evidence, current-host installer evidence, and live-provider evidence. It does not treat a synthetic adapter, a carried-forward seat record, or a successful compile as a completed product certification.
