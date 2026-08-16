@@ -25,6 +25,8 @@ PROVIDER_TURNS = 0
 
 The UI displayed only safe relative paths, exclusion reasons, and hashes. It did not display or persist excluded contents, matched substrings, or provider context. Owner approval is still required before any provider process can launch.
 
+This implementation checkpoint was committed and pushed to `main` as `01d9657f7219754e35285dcb8e64808d336aea21`. GitHub Actions run `31943606032` completed successfully with pinned Rust formatting, workspace tests/check, frontend policy tests/build, and the reachable-history privacy audit passing.
+
 ## Verdict
 
 ```text

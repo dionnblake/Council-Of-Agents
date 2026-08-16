@@ -21,6 +21,8 @@ This continuation started from GitHub `main` at `26f51360ca601d8c9fcf5ca2f6b97ff
 
 Automated coverage after the change is 42/42 Rust workspace tests and 7/7 frontend policy tests. The corrected native NSIS candidate is installed in the isolated test directory and the clean repository-grounded debate below is waiting for owner approval at the review gate. No provider turn or provider process has launched.
 
+This checkpoint was committed and pushed to `main` as `01d9657f7219754e35285dcb8e64808d336aea21`. GitHub Actions run `31943606032` completed successfully with pinned Rust formatting, workspace tests/check, frontend policy tests/build, and the reachable-history privacy audit passing.
+
 ```text
 DEBATE_ID = debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb
 STATE = SNAPSHOT_REVIEW_REQUIRED
@@ -89,6 +91,8 @@ The frontend tests cover human decision rationale, preview non-persistence, fail
 
 `.github/workflows/windows.yml` runs on Windows for pushes, pull requests, and manual dispatch. It runs Rust formatting, full workspace tests, workspace checking, `npm ci`, frontend policy tests, the frontend build, and the reachable-history privacy audit. It contains no live-provider step. Ordinary Git identity metadata is reported as a warning; secret, private-path, credential, and token findings remain fatal.
 
+For this checkpoint, run `31943606032` passed on commit `01d9657f7219754e35285dcb8e64808d336aea21`.
+
 ## 7. NSIS build and artifact hash
 
 Command:
@@ -156,6 +160,6 @@ Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable
 
 ## 12. Exact commit and closeout
 
-The exact audited starting commit for the earlier report is `189f867a600633ce80be8b392959af0920b2c5d7`. This continuation started from `26f51360ca601d8c9fcf5ca2f6b97fffff150902`; the continuation implementation commit is pending the required owner review and final certification gates. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`.
+The exact audited starting commit for the earlier report is `189f867a600633ce80be8b392959af0920b2c5d7`. This continuation started from `26f51360ca601d8c9fcf5ca2f6b97fffff150902` and was committed and pushed as `01d9657f7219754e35285dcb8e64808d336aea21`. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`. Owner review and the remaining live-provider certification gates are still open.
 
 No M1 work was started.
