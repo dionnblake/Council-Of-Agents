@@ -47,7 +47,7 @@ The intentional Council architecture paths, including `/home/council`, remain do
 - The repository was private during sanitation and history rewriting.
 - Sanitized `main` was force-pushed with a lease after local gates passed.
 - Independent remote clone verification passed: the remote exposed only `main`, the privacy checker passed, all known private-path indicators were absent from reachable history, and commit metadata was public-safe.
-- Final visibility at this report revision: PRIVATE. Visibility restoration is the remaining owner-controlled step after this report is published.
+- Final visibility at this report revision: PUBLIC. All required privacy, secret, build/test, and remote gates passed before restoration.
 
 ## Known limitations
 
