@@ -294,7 +294,12 @@ impl<E: ProviderExecutor> CouncilOrchestrator<E> {
             let validation = validate_position_value(&position_value, repository_grounded);
             if validation.schema_valid && validation.semantic_valid {
                 let mut position = validation.position.expect("valid position is present");
-                assign_controller_claim_ids(&mut position, request.provider.slug(), round);
+                assign_controller_claim_ids(
+                    &mut position,
+                    request.provider.slug(),
+                    round,
+                    &turn_id,
+                );
                 let provider_position = ProviderPosition {
                     provider: request.provider.clone(),
                     round,
@@ -402,7 +407,9 @@ pub fn extract_position_value(stdout: &str) -> Option<Value> {
 fn find_position_object(value: &Value) -> Option<Value> {
     match value {
         Value::Object(map) => {
-            if map.contains_key("recommendation")
+            if map.get("schema_version").and_then(Value::as_str)
+                == Some(crate::POSITION_SCHEMA_VERSION)
+                && map.contains_key("recommendation")
                 && map.contains_key("commitment")
                 && map.contains_key("claims")
                 && map.contains_key("risks")
@@ -412,6 +419,9 @@ fn find_position_object(value: &Value) -> Option<Value> {
             map.values().find_map(find_position_object)
         }
         Value::Array(values) => values.iter().find_map(find_position_object),
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|parsed| find_position_object(&parsed)),
         _ => None,
     }
 }
@@ -493,6 +503,44 @@ mod tests {
     }
 
     #[test]
+    fn ignores_json_schema_property_objects_when_extracting_positions() {
+        let stdout = serde_json::json!({
+            "json_schema": {
+                "properties": {
+                    "schema_version": {"const": crate::POSITION_SCHEMA_VERSION},
+                    "recommendation": {},
+                    "commitment": {},
+                    "claims": {},
+                    "risks": {}
+                }
+            },
+            "structured_output": serde_json::from_str::<Value>(&valid_json()).unwrap()
+        })
+        .to_string();
+        let extracted = extract_position_value(&stdout).expect("structured position");
+        assert_eq!(
+            extracted.get("schema_version").and_then(Value::as_str),
+            Some(crate::POSITION_SCHEMA_VERSION)
+        );
+        assert!(
+            extracted
+                .get("recommendation")
+                .and_then(Value::as_str)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn extracts_position_from_string_result_envelope() {
+        let stdout = serde_json::json!({"result": valid_json()}).to_string();
+        let extracted = extract_position_value(&stdout).expect("string-encoded position");
+        assert_eq!(
+            extracted.get("schema_version").and_then(Value::as_str),
+            Some(crate::POSITION_SCHEMA_VERSION)
+        );
+    }
+
+    #[test]
     fn antigravity_gets_one_repair_attempt_and_controller_ids() {
         let executor = FakeExecutor {
             outputs: Arc::new(Mutex::new(VecDeque::from([
@@ -508,10 +556,12 @@ mod tests {
         }]);
         assert_eq!(result.turns[0].state, TurnState::Valid);
         assert_eq!(result.turns[0].attempts.len(), 2);
-        assert_eq!(
-            result.positions[0].position.claims[0].id,
-            "C-ANTIGRAVITY-R1-001"
+        assert!(
+            result.positions[0].position.claims[0]
+                .id
+                .starts_with("C-ANTIGRAVITY-R1-")
         );
+        assert!(result.positions[0].position.claims[0].id.ends_with("-001"));
     }
 
     #[test]

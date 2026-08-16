@@ -166,6 +166,10 @@ const navItems: { id: Screen; label: string; icon: string }[] = [
   { id: "export", label: "Export", icon: "↗" },
 ];
 
+const UI_ZOOM_MIN = 0.75;
+const UI_ZOOM_MAX = 1.5;
+const UI_ZOOM_STEP = 0.1;
+
 function statusClass(state: SeatState) {
   return state.toLowerCase().replace("_", "-");
 }
@@ -210,6 +214,44 @@ function App() {
   });
   const [notice, setNotice] = useState("Runtime is in preview mode until the Tauri shell is launched.");
   const [settingsView, setSettingsView] = useState<SettingsView | null>(null);
+  const [uiZoom, setUiZoom] = useState(1);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("zoom", String(uiZoom));
+  }, [uiZoom]);
+
+  useEffect(() => {
+    const adjustZoom = (direction: 1 | -1) => {
+      setUiZoom((current) => Math.min(UI_ZOOM_MAX, Math.max(UI_ZOOM_MIN, Number((current + direction * UI_ZOOM_STEP).toFixed(2)))));
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey || event.deltaY === 0) return;
+      event.preventDefault();
+      adjustZoom(event.deltaY < 0 ? 1 : -1);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+      const zoomIn = event.key === "+" || event.key === "=" || event.code === "NumpadAdd";
+      const zoomOut = event.key === "-" || event.key === "_" || event.code === "NumpadSubtract";
+      const reset = event.key === "0" || event.code === "Numpad0";
+      if (!zoomIn && !zoomOut && !reset) return;
+      event.preventDefault();
+      if (reset) {
+        setUiZoom(1);
+      } else {
+        adjustZoom(zoomIn ? 1 : -1);
+      }
+    };
+
+    window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("wheel", handleWheel, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, []);
 
   useEffect(() => {
     invoke<ProviderStatus[]>("provider_statuses")

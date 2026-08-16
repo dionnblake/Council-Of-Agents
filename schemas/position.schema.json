@@ -16,6 +16,7 @@
   ],
   "properties": {
     "schema_version": {
+      "type": "string",
       "const": "output-position.v1"
     },
     "recommendation": {

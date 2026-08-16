@@ -178,9 +178,21 @@ pub fn is_citation_shape(value: &str) -> bool {
     start.parse::<u64>().is_ok() && end.parse::<u64>().is_ok() && start != "0" && end != "0"
 }
 
-pub fn assign_controller_claim_ids(position: &mut Position, provider: &str, round: u8) {
+pub fn assign_controller_claim_ids(
+    position: &mut Position,
+    provider: &str,
+    round: u8,
+    turn_id: &str,
+) {
+    let turn_namespace = crate::content_hash(turn_id);
     for (index, claim) in position.claims.iter_mut().enumerate() {
-        claim.id = format!("C-{}-R{}-{:03}", provider.to_uppercase(), round, index + 1);
+        claim.id = format!(
+            "C-{}-R{}-{}-{:03}",
+            provider.to_uppercase(),
+            round,
+            &turn_namespace[..12],
+            index + 1
+        );
     }
 }
 
@@ -253,7 +265,8 @@ mod tests {
         let report = validate_position_value(&value, true);
         assert!(report.schema_valid);
         assert!(report.semantic_valid);
-        assign_controller_claim_ids(&mut position, "codex", 1);
-        assert_eq!(position.claims[0].id, "C-CODEX-R1-001");
+        assign_controller_claim_ids(&mut position, "codex", 1, "turn-test");
+        assert!(position.claims[0].id.starts_with("C-CODEX-R1-"));
+        assert!(position.claims[0].id.ends_with("-001"));
     }
 }

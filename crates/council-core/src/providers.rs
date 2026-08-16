@@ -13,6 +13,7 @@ pub struct CommandSpec {
     pub environment: BTreeMap<String, String>,
     pub working_directory: PathBuf,
     pub prompt_via_stdin: bool,
+    pub windows_job_containment: bool,
     pub timeout_ms: u64,
     pub kill_fallback: Option<CommandInvocation>,
 }
@@ -251,7 +252,7 @@ fn build_codex_command(
             "Codex prompt must explicitly reference the Linux snapshot path".to_string(),
         ));
     }
-    let mut args = vec![
+    let mut wsl_args = vec![
         "-d".to_string(),
         distribution.to_string(),
         "--user".to_string(),
@@ -283,13 +284,28 @@ fn build_codex_command(
         linux_path(linux_schema),
         "-".to_string(),
     ];
-    args.extend(config.extra_args.clone());
+    wsl_args.extend(config.extra_args.clone());
+    let command_line = std::iter::once("wsl.exe".to_string())
+        .chain(
+            wsl_args
+                .iter()
+                .map(|argument| cmd_token(argument))
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+        .collect::<Vec<_>>()
+        .join(" ");
     Ok(CommandSpec {
-        program: config.executable.clone(),
-        args,
-        environment: BTreeMap::new(),
+        program: PathBuf::from("cmd.exe"),
+        args: vec![
+            "/d".to_string(),
+            "/s".to_string(),
+            "/c".to_string(),
+            command_line,
+        ],
+        environment: safe_host_environment(),
         working_directory: request.working_directory.clone(),
         prompt_via_stdin: true,
+        windows_job_containment: false,
         timeout_ms: request.timeout_ms,
         kill_fallback: Some(CommandInvocation {
             program: PathBuf::from("wsl.exe"),
@@ -305,6 +321,27 @@ fn build_claude_command(
     let config_dir = config.config_dir.as_ref().ok_or_else(|| {
         ProviderError::InvalidConfiguration("missing Claude config directory".to_string())
     })?;
+    let schema_text = std::fs::read_to_string(&request.schema_path).map_err(|error| {
+        ProviderError::InvalidConfiguration(format!(
+            "cannot read Claude output schema {}: {error}",
+            request.schema_path.display()
+        ))
+    })?;
+    let mut schema_value: Value = serde_json::from_str(&schema_text).map_err(|error| {
+        ProviderError::InvalidConfiguration(format!(
+            "invalid Claude output schema {}: {error}",
+            request.schema_path.display()
+        ))
+    })?;
+    if let Some(object) = schema_value.as_object_mut() {
+        object.remove("$schema");
+    }
+    let schema_text = serde_json::to_string(&schema_value).map_err(|error| {
+        ProviderError::InvalidConfiguration(format!(
+            "cannot serialize Claude output schema {}: {error}",
+            request.schema_path.display()
+        ))
+    })?;
     let mut args = vec![
         "--print".to_string(),
         "--no-session-persistence".to_string(),
@@ -315,10 +352,16 @@ fn build_claude_command(
         "--output-format".to_string(),
         "json".to_string(),
         "--json-schema".to_string(),
-        request.schema_path.to_string_lossy().to_string(),
+        schema_text,
         "--model".to_string(),
         request.model.clone(),
+        "--add-dir".to_string(),
+        request.packet_directory.to_string_lossy().to_string(),
     ];
+    if let Some(snapshot_path) = request.snapshot_path.as_deref() {
+        args.push("--add-dir".to_string());
+        args.push(snapshot_path.to_string_lossy().to_string());
+    }
     args.extend(config.extra_args.clone());
     let mut environment = safe_host_environment();
     environment.insert(
@@ -331,6 +374,7 @@ fn build_claude_command(
         environment,
         working_directory: request.working_directory.clone(),
         prompt_via_stdin: true,
+        windows_job_containment: true,
         timeout_ms: request.timeout_ms,
         kill_fallback: None,
     })
@@ -352,7 +396,13 @@ fn build_antigravity_command(
         "json".to_string(),
         "--json-schema".to_string(),
         request.schema_path.to_string_lossy().to_string(),
+        "--add-dir".to_string(),
+        request.packet_directory.to_string_lossy().to_string(),
     ];
+    if let Some(snapshot_path) = request.snapshot_path.as_deref() {
+        args.push("--add-dir".to_string());
+        args.push(snapshot_path.to_string_lossy().to_string());
+    }
     args.extend(config.extra_args.clone());
     let mut environment = safe_host_environment();
     environment.extend(
@@ -366,6 +416,7 @@ fn build_antigravity_command(
         environment,
         working_directory: request.working_directory.clone(),
         prompt_via_stdin: false,
+        windows_job_containment: true,
         timeout_ms: request.timeout_ms,
         kill_fallback: None,
     })
@@ -373,6 +424,17 @@ fn build_antigravity_command(
 
 fn linux_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn cmd_token(value: &str) -> Result<String, ProviderError> {
+    if value.chars().any(|character| {
+        character.is_whitespace() || matches!(character, '&' | '|' | '<' | '>' | '^' | '%' | '!')
+    }) {
+        return Err(ProviderError::InvalidConfiguration(
+            "Codex command argument contains unsafe cmd.exe syntax".to_string(),
+        ));
+    }
+    Ok(value.to_string())
 }
 
 fn safe_host_environment() -> BTreeMap<String, String> {
@@ -400,11 +462,17 @@ fn safe_host_environment() -> BTreeMap<String, String> {
 }
 
 pub fn classify_failure(stdout: &str, stderr: &str, exit_code: Option<i32>) -> Option<FailureType> {
-    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    let mut diagnostics = stderr.to_string();
+    for line in stdout.lines() {
+        if let Ok(value) = serde_json::from_str::<Value>(line) {
+            collect_structured_error(&value, &mut diagnostics);
+        }
+    }
+    let combined = diagnostics.to_ascii_lowercase();
     if combined.contains("not logged in")
         || combined.contains("login required")
         || combined.contains("authentication required")
-        || combined.contains("401")
+        || contains_standalone_401(&combined)
     {
         return Some(FailureType::AuthRequired);
     }
@@ -422,6 +490,48 @@ pub fn classify_failure(stdout: &str, stderr: &str, exit_code: Option<i32>) -> O
         return Some(FailureType::ProcessError);
     }
     None
+}
+
+fn collect_structured_error(value: &Value, output: &mut String) {
+    match value {
+        Value::Object(map) => {
+            let is_error = map
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("error"))
+                || map.get("is_error").and_then(Value::as_bool) == Some(true)
+                || map.get("error").is_some_and(|error| !error.is_null());
+            if is_error {
+                output.push_str(&value.to_string());
+                output.push('\n');
+            }
+            for child in map.values() {
+                collect_structured_error(child, output);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_structured_error(child, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn contains_standalone_401(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.windows(3).enumerate().any(|(index, window)| {
+        if window != b"401" {
+            return false;
+        }
+        let before = index
+            .checked_sub(1)
+            .and_then(|position| bytes.get(position))
+            .copied()
+            .unwrap_or(b' ');
+        let after = bytes.get(index + 3).copied().unwrap_or(b' ');
+        !before.is_ascii_hexdigit() && !after.is_ascii_hexdigit()
+    })
 }
 
 pub fn serving_identity_from_jsonl(
@@ -507,10 +617,15 @@ mod tests {
             snapshot_manifest_hash: None,
         };
         let command = registry.build_command(&request).unwrap();
-        assert_eq!(command.program, PathBuf::from("wsl.exe"));
-        assert!(command.args.contains(&"CouncilCodexWSL".to_string()));
-        assert!(command.args.contains(&"read-only".to_string()));
-        assert!(command.args.contains(&"--ephemeral".to_string()));
+        assert_eq!(command.program, PathBuf::from("cmd.exe"));
+        assert_eq!(command.args[0], "/d");
+        assert!(command.args[3].contains("wsl.exe"));
+        assert!(command.args[3].contains("CouncilCodexWSL"));
+        assert!(command.args[3].contains("read-only"));
+        assert!(command.args[3].contains("--ephemeral"));
+        assert!(command.args[3].ends_with(" -"));
+        assert!(command.prompt_via_stdin);
+        assert!(!command.windows_job_containment);
         assert!(!command.environment.contains_key("OPENAI_API_KEY"));
         assert!(command.kill_fallback.is_some());
     }
@@ -538,5 +653,23 @@ mod tests {
         );
         assert!(served.is_none());
         assert_eq!(status, ServingIdentityStatus::ProviderDoesNotReport);
+    }
+
+    #[test]
+    fn failure_classifier_ignores_model_text_and_hash_substrings() {
+        let output = r#"{"is_error":false,"result":"Schema evolution may invalidate a hypothesis","hash":"a401e9"}"#;
+        assert_eq!(classify_failure(output, "", Some(0)), None);
+        assert_eq!(
+            classify_failure(
+                r#"{"type":"error","message":"authentication required"}"#,
+                "",
+                Some(0)
+            ),
+            Some(FailureType::AuthRequired)
+        );
+        assert_eq!(
+            classify_failure(r#"{"type":"error","message":"HTTP 401"}"#, "", Some(0)),
+            Some(FailureType::AuthRequired)
+        );
     }
 }

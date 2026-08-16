@@ -13,6 +13,7 @@ use council_core::{
     validate_intake,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -685,7 +686,7 @@ fn verify_wsl_snapshot(
     destination: &str,
 ) -> Result<(), String> {
     let script = format!(
-        "set -eu; cd {}; find . -type f ! -name snapshot-manifest.json -print0 | sort -z | while IFS= read -r -d '' file; do hash=$(sha256sum -- \"$file\" | cut -d' ' -f1); size=$(stat -c '%s' -- \"$file\"); printf '%s\\t%s\\t%s\\n' \"$file\" \"$size\" \"$hash\"; done",
+        "set -eu; cd {}; find . -type f ! -name snapshot-manifest.json -print0 | sort -z | while IFS= read -r -d '' file; do hash=\\$(sha256sum -- \"\\$file\" | cut -d' ' -f1); size=\\$(stat -c '%s' -- \"\\$file\"); printf '%s\\t%s\\t%s\\n' \"\\$file\" \"\\$size\" \"\\$hash\"; done",
         shell_quote(destination)
     );
     let output = Command::new("wsl.exe")
@@ -943,6 +944,7 @@ fn round_packet_body(
         "rules": [
             "Reason only. Do not modify files, create branches, commit, push, deploy, or hand off implementation.",
             "Return exactly one JSON object matching output-position.v1.",
+            "For repository-grounded debates, every claim must include at least one valid path:startLine-endLine citation from the sealed snapshot; never emit a repository-grounded claim with empty evidence.",
             "Use controller-owned claim IDs only after validation; do not invent IDs.",
             "Preserve meaningful dissent and state the flip condition, cost if wrong, and reversibility."
         ]
@@ -965,6 +967,35 @@ fn provider_prompt(
     format!(
         "Council round {round} for {provider_name}. Read the immutable packet at {path}. Return exactly one JSON object matching the contract described by the schema file {schema_path}.{snapshot_instruction} Reason only. Do not write files or implement anything. Do not add markdown or commentary."
     )
+}
+
+fn codex_provider_schema_text(schema_text: &str) -> Result<String, String> {
+    let mut schema: Value = serde_json::from_str(schema_text)
+        .map_err(|error| format!("cannot parse Codex provider schema: {error}"))?;
+    let required = schema
+        .pointer("/properties")
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
+        .ok_or_else(|| "Codex provider schema has no top-level properties".to_string())?;
+    let evidence = schema
+        .pointer_mut("/properties/claims/items/properties/evidence")
+        .ok_or_else(|| "Codex provider schema has no claim evidence property".to_string())?;
+    *evidence = serde_json::json!({
+        "type": "array",
+        "items": {
+            "type": "string",
+            "pattern": "^[^:]+:[0-9]+-[0-9]+$"
+        }
+    });
+    let schema_object = schema
+        .as_object_mut()
+        .ok_or_else(|| "Codex provider schema is not an object".to_string())?;
+    schema_object.insert(
+        "required".to_string(),
+        Value::Array(required.into_iter().map(Value::String).collect()),
+    );
+    serde_json::to_string(&schema)
+        .map_err(|error| format!("cannot serialize Codex provider schema: {error}"))
 }
 
 #[tauri::command]
@@ -1348,6 +1379,22 @@ fn run_discovery_round(
             config.model_default = selection.requested_model.clone();
         }
     }
+    let retry_token = if let Some(token) = retry_token {
+        Some(token)
+    } else {
+        let recovery_required = configs.iter().try_fold(false, |found, config| {
+            if found {
+                return Ok::<bool, String>(true);
+            }
+            let base_call_id = dispatch_call_id(&debate_id, 0, &config.provider, 1, None);
+            Ok(database
+                .dispatch_status(&base_call_id)
+                .map_err(|error| error.to_string())?
+                .as_deref()
+                == Some("RUNNING_UNKNOWN"))
+        })?;
+        recovery_required.then(|| new_id("recovery"))
+    };
     if let Err(error) = ensure_subscription_environment() {
         let detail = error.to_string();
         database
@@ -1950,6 +1997,22 @@ fn run_round(
             config.model_default = selection.requested_model.clone();
         }
     }
+    let retry_token = if let Some(token) = retry_token {
+        Some(token)
+    } else {
+        let recovery_required = configs.iter().try_fold(false, |found, config| {
+            if found {
+                return Ok::<bool, String>(true);
+            }
+            let base_call_id = dispatch_call_id(&debate_id, round, &config.provider, 1, None);
+            Ok(database
+                .dispatch_status(&base_call_id)
+                .map_err(|error| error.to_string())?
+                .as_deref()
+                == Some("RUNNING_UNKNOWN"))
+        })?;
+        recovery_required.then(|| new_id("recovery"))
+    };
     if let Err(error) = ensure_subscription_environment() {
         let detail = error.to_string();
         database
@@ -2183,6 +2246,7 @@ fn run_round(
     };
     let mut requests = Vec::new();
     let mut packet_hashes = BTreeMap::new();
+    let mut schema_hashes = BTreeMap::new();
     let mut provider_configs = BTreeMap::new();
 
     for config in &configs {
@@ -2243,8 +2307,14 @@ fn run_round(
         let written = packet
             .write_sealed(&provider_directory)
             .map_err(|error| error.to_string())?;
+        let provider_schema_text = if config.provider == ProviderKind::CodexWsl {
+            codex_provider_schema_text(schema_text)?
+        } else {
+            schema_text.to_string()
+        };
+        let provider_schema_hash = content_hash(&provider_schema_text);
         let schema_for_provider = provider_directory.join("output-position.v1.json");
-        write_immutable(&schema_for_provider, schema_text.as_bytes())?;
+        write_immutable(&schema_for_provider, provider_schema_text.as_bytes())?;
         database
             .create_turn(
                 &turn_id,
@@ -2300,7 +2370,7 @@ fn run_round(
             expected.insert(packet_file_name.to_string(), written.sha256.clone());
             expected.insert(
                 "output-position.v1.json".to_string(),
-                content_hash(schema_text),
+                provider_schema_hash.clone(),
             );
             verify_wsl_payload(distribution, user, &linux_destination, &expected)?;
             let linux_scratch = format!(
@@ -2355,6 +2425,7 @@ fn run_round(
                 .map(|snapshot| snapshot.manifest.manifest_sha256.clone()),
         };
         provider_configs.insert(config.provider.clone(), config.clone());
+        schema_hashes.insert(config.provider.slug().to_string(), provider_schema_hash);
         requests.push(request);
     }
 
@@ -2368,11 +2439,12 @@ fn run_round(
     for request in &requests {
         if let Some(turn_id) = request.turn_id.as_deref() {
             database
-                .mark_dispatch_running(&deterministic_call_id(
+                .mark_dispatch_running(&dispatch_call_id(
                     &debate_id,
                     round,
                     &request.provider,
                     1,
+                    retry_token.as_deref(),
                 ))
                 .map_err(|error| error.to_string())?;
             database
@@ -2458,7 +2530,7 @@ fn run_round(
                         &turn.turn_id,
                         raw_result,
                         packet_hashes.get(turn.provider.slug()).map(String::as_str),
-                        Some(&content_hash(schema_text)),
+                        schema_hashes.get(turn.provider.slug()).map(String::as_str),
                     )
                     .map_err(|error| error.to_string())?;
             }

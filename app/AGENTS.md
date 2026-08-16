@@ -21,6 +21,7 @@ Own the Tauri 2 shell, React command-center UI, and the typed IPC boundary for C
 
 - Run npm run build from app/.
 - Run cargo check -p council-desktop with the workspace target directory.
+- For Windows release certification, run `npx tauri build --bundles nsis` from app/ and verify the generated installer artifact.
 - Perform a desktop/browser smoke check when the Tauri runtime is available; report it separately from compile verification.
 
 ## Child DOX Index

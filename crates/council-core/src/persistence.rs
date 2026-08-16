@@ -786,15 +786,52 @@ impl Database {
     }
 
     pub fn recover_inflight_dispatches(&self) -> Result<u64, DatabaseError> {
+        let debate_ids = {
+            let mut statement = self.connection.prepare(
+                "SELECT DISTINCT debate_id FROM dispatch_intents WHERE status = 'RUNNING'",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
         let changed = self.connection.execute(
             "UPDATE dispatch_intents SET status = 'RUNNING_UNKNOWN', updated_at = ?1 WHERE status = 'RUNNING'",
             params![Utc::now().to_rfc3339()],
         )?;
         if changed > 0 {
+            for debate_id in &debate_ids {
+                let state_text: String = self.connection.query_row(
+                    "SELECT state FROM debates WHERE id = ?1",
+                    params![debate_id],
+                    |row| row.get(0),
+                )?;
+                let state: DebateState = serde_json::from_str(&state_text)?;
+                if matches!(
+                    state,
+                    DebateState::Draft
+                        | DebateState::Preflight
+                        | DebateState::Snapshotting
+                        | DebateState::Ready
+                        | DebateState::Opening
+                        | DebateState::CrossExamination
+                        | DebateState::FinalPositions
+                        | DebateState::AwaitingHumanDecision
+                ) {
+                    self.transition_debate(debate_id, DebateEvent::Pause)?;
+                } else if !matches!(state, DebateState::Paused) {
+                    self.record_safety_event(
+                        Some(debate_id),
+                        "RECOVERY_STATE_UNEXPECTED",
+                        &format!(
+                            "in-flight dispatch recovered from terminal state {state:?}; human review is required"
+                        ),
+                    )?;
+                }
+            }
             self.append_audit_event(
                 None,
                 "DISPATCH_RECOVERY_REQUIRED",
-                json!({"running_unknown": changed}),
+                json!({"running_unknown": changed, "debates": debate_ids}),
             )?;
         }
         Ok(changed as u64)
@@ -1384,6 +1421,16 @@ mod tests {
         assert_eq!(
             database.dispatch_status("call-intent").unwrap().as_deref(),
             Some("RUNNING_UNKNOWN")
+        );
+        assert_eq!(
+            database.load_debate(&debate.id).unwrap().state,
+            DebateState::Paused
+        );
+        assert_eq!(
+            database
+                .transition_debate(&debate.id, DebateEvent::Resume)
+                .unwrap(),
+            DebateState::Ready
         );
         database
             .mark_dispatch_complete("call-intent", Some("raw-intent"), "COMPLETED")

@@ -62,7 +62,11 @@ impl ProcessRunner {
             .stderr(Stdio::piped());
         let mut child = command.spawn()?;
         #[cfg(windows)]
-        let _job = attach_kill_on_close_job(&child)?;
+        let _job = if specification.windows_job_containment {
+            Some(attach_kill_on_close_job(&child)?)
+        } else {
+            None
+        };
 
         if specification.prompt_via_stdin {
             if let Some(mut stdin) = child.stdin.take() {
@@ -205,6 +209,7 @@ mod tests {
             environment: BTreeMap::new(),
             working_directory: PathBuf::from("."),
             prompt_via_stdin: false,
+            windows_job_containment: true,
             timeout_ms: 100,
             kill_fallback: None,
         };

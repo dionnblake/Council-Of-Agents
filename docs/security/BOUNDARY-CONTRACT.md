@@ -66,7 +66,7 @@ The controller rejects configured API keys, custom provider URLs, and alternate 
 - A targeted round is human-requested and capped at one.
 - If a seat is unavailable, the human may explicitly proceed with at least two remaining seats and a persisted rationale; the controller never silently shrinks the council.
 - Independent-only evaluation stops after the opening positions and records deterministic evaluation metrics without treating the result as a production council decision.
-- Process timeout uses Windows Job Object containment, with the dedicated Codex WSL distribution termination as the hard fallback.
+- Process timeout uses Windows Job Object containment for native provider processes. The dedicated Codex WSL process is intentionally excluded from a Windows Job Object because this host's `wsl.exe` RPC rejects Job Object assignment; Codex remains bounded by the cleared `env -i` subscription environment, the fixed `CouncilCodexWSL` distribution and `council` user, read-only Codex sandbox, isolated Linux working directory, sealed snapshot and hash checks, and `wsl --terminate CouncilCodexWSL` as the hard timeout fallback.
 
 ## Human authority
 
@@ -74,4 +74,4 @@ Provider output is advisory. Majority is not authority. The human decision is re
 
 ## Evidence status
 
-The M0.8 records prove the dedicated Codex WSL seat in its certification environment. They do not prove that every future host has the same WSL distribution, authentication, or provider availability. The V1 runtime therefore performs preflight on the current host, keeps unavailable seats visible, and requires an explicit degraded-mode choice before continuing.
+V1 runtime certification on the current host completed a controlled-repository three-seat debate through opening, cross-examination, final positions, human decision, and local export, with all three seats returning valid positions. Cancellation and restart recovery were also exercised. This remains host-specific evidence; future hosts may not have the same WSL distribution, authentication, or provider availability, so V1 still performs preflight, keeps unavailable seats visible, and requires an explicit degraded-mode choice before continuing.

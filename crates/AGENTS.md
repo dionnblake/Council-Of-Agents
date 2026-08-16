@@ -12,6 +12,7 @@ Own the Rust workspace packages for Council of Agents.
 ## Local Contracts
 
 - Provider execution must use explicit environment allowlists and account-based subscription authentication.
+- Windows Job Object containment remains enabled for native provider processes. The Codex WSL command uses the explicit WSL boundary controls instead because this host's `wsl.exe` RPC fails for any Job Object assignment; its dedicated distribution termination remains the timeout fallback.
 - No provider adapter may implement autonomous coding, repository mutation, handoff, or external publishing.
 - Snapshot and packet bytes must remain inspectable and hashable.
 - Repair policies and certification limitations are explicit data, not inferred from success.
