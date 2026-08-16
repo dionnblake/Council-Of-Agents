@@ -77,6 +77,18 @@ test("provider limitations and requested/served status remain visible", () => {
   assert.match(appSource, /certification/i);
 });
 
+test("model controls expose provider-specific dropdown choices", () => {
+  assert.match(appSource, /function ModelSelect/);
+  assert.match(appSource, /function LevelSelect/);
+  assert.match(appSource, /<select/);
+  assert.match(appSource, /provider=\{provider\.provider\}/);
+  assert.match(appSource, /reasoningEffortOverrides/);
+  assert.match(appSource, /Max · Luna default/);
+  assert.match(appSource, /Ultra · auto-delegation/);
+  assert.match(appSource, /gemini-3\.7-flash-high/);
+  assert.match(appSource, /gpt-5\.6-terra/);
+});
+
 test("secret snapshot review is persisted, exact, and human-controlled", () => {
   assert.match(appSource, /invoke<SnapshotReviewStatus \| null>\("snapshot_review_status"/);
   assert.match(appSource, /invoke<SnapshotReviewStatus>\(command/);

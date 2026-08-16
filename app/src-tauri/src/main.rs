@@ -364,7 +364,8 @@ fn configured_provider_configs(database: &Database) -> Result<Vec<ProviderConfig
         .into_iter()
         .map(|config| (config.provider.clone(), config))
         .collect::<BTreeMap<_, _>>();
-    for config in stored {
+    for mut config in stored {
+        config.normalize_defaults();
         merged.insert(config.provider.clone(), config);
     }
     Ok(merged.into_values().collect())
@@ -396,6 +397,12 @@ fn validate_provider_settings(configs: &[ProviderConfig]) -> Result<(), String> 
                 config.provider.slug()
             ));
         }
+        council_core::providers::validate_reasoning_effort(
+            &config.provider,
+            &config.model_default,
+            &config.reasoning_effort_default,
+        )
+        .map_err(|error| error.to_string())?;
         if config.executable.as_os_str().is_empty() {
             return Err(format!("{} requires an executable", config.provider.slug()));
         }
@@ -1302,6 +1309,7 @@ fn create_debate(
     app: tauri::AppHandle,
     intake: Intake,
     model_overrides: Option<BTreeMap<String, String>>,
+    reasoning_effort_overrides: Option<BTreeMap<String, String>>,
     independent_only: Option<bool>,
     enabled_providers: Option<Vec<String>>,
 ) -> Result<DebateSummary, String> {
@@ -1345,19 +1353,34 @@ fn create_debate(
         );
     }
     let model_overrides = model_overrides.unwrap_or_default();
+    let reasoning_effort_overrides = reasoning_effort_overrides.unwrap_or_default();
     let provider_models = configured
         .into_iter()
         .filter(|config| requested.contains(&config.provider))
-        .map(|config| {
+        .map(|config| -> Result<_, String> {
             let key = config.provider.slug().to_string();
             let requested_model = model_overrides
                 .get(&key)
                 .filter(|model| !model.trim().is_empty())
                 .cloned()
                 .unwrap_or_else(|| config.model_default.clone());
-            (config.provider, ModelSelection::requested(requested_model))
+            let reasoning_effort = reasoning_effort_overrides
+                .get(&key)
+                .filter(|effort| !effort.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| config.reasoning_effort_default.clone());
+            council_core::providers::validate_reasoning_effort(
+                &config.provider,
+                &requested_model,
+                &reasoning_effort,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok((
+                config.provider,
+                ModelSelection::requested_with_effort(requested_model, reasoning_effort),
+            ))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     if provider_models.len() != requested.len() {
         return Err("every selected provider must have a persisted configuration".to_string());
     }
@@ -1757,6 +1780,9 @@ fn run_discovery_round(
     for config in &mut configs {
         if let Some(selection) = debate.provider_models.get(&config.provider) {
             config.model_default = selection.requested_model.clone();
+            if let Some(reasoning_effort) = selection.reasoning_effort.as_deref() {
+                config.reasoning_effort_default = reasoning_effort.to_string();
+            }
         }
     }
     let retry_token = if let Some(token) = retry_token {
@@ -2086,6 +2112,7 @@ fn run_discovery_round(
         requests.push(ProviderCallRequest {
             provider: config.provider.clone(),
             model: config.model_default.clone(),
+            reasoning_effort: config.reasoning_effort_default.clone(),
             turn_id: Some(turn_id.clone()),
             packet_path: written.path,
             packet_directory: provider_directory,
@@ -2374,6 +2401,9 @@ fn run_round(
     for config in &mut configs {
         if let Some(selection) = debate.provider_models.get(&config.provider) {
             config.model_default = selection.requested_model.clone();
+            if let Some(reasoning_effort) = selection.reasoning_effort.as_deref() {
+                config.reasoning_effort_default = reasoning_effort.to_string();
+            }
         }
     }
     let retry_token = if let Some(token) = retry_token {
@@ -2773,6 +2803,7 @@ fn run_round(
         let request = ProviderCallRequest {
             provider: config.provider.clone(),
             model: config.model_default.clone(),
+            reasoning_effort: config.reasoning_effort_default.clone(),
             turn_id: Some(turn_id),
             packet_path: written.path,
             packet_directory: provider_directory,

@@ -63,6 +63,49 @@ impl ProviderKind {
     }
 }
 
+pub const CLAUDE_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+pub const ANTIGRAVITY_REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+pub const CODEX_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+pub const CODEX_EXTENDED_REASONING_EFFORTS: &[&str] =
+    &["low", "medium", "high", "xhigh", "max", "ultra"];
+
+pub fn supported_reasoning_efforts(provider: &ProviderKind) -> &'static [&'static str] {
+    match provider {
+        ProviderKind::Claude => CLAUDE_REASONING_EFFORTS,
+        ProviderKind::Antigravity => ANTIGRAVITY_REASONING_EFFORTS,
+        ProviderKind::CodexWsl => CODEX_REASONING_EFFORTS,
+    }
+}
+
+pub fn supported_reasoning_efforts_for_model(
+    provider: &ProviderKind,
+    model: &str,
+) -> &'static [&'static str] {
+    if matches!(provider, ProviderKind::CodexWsl)
+        && matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra")
+    {
+        CODEX_EXTENDED_REASONING_EFFORTS
+    } else {
+        supported_reasoning_efforts(provider)
+    }
+}
+
+pub fn default_reasoning_effort(provider: &ProviderKind) -> &'static str {
+    match provider {
+        ProviderKind::Claude => "high",
+        ProviderKind::Antigravity => "medium",
+        ProviderKind::CodexWsl => "max",
+    }
+}
+
+pub fn default_reasoning_effort_for_model(provider: &ProviderKind, model: &str) -> &'static str {
+    match (provider, model) {
+        (ProviderKind::CodexWsl, "gpt-5.6-sol") => "low",
+        (ProviderKind::CodexWsl, "gpt-5.6-terra") => "medium",
+        _ => default_reasoning_effort(provider),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CertificationStatus {
@@ -191,6 +234,8 @@ pub enum FailureType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelSelection {
     pub requested_model: String,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
     pub reported_served_model: Option<String>,
     pub serving_identity_status: ServingIdentityStatus,
 }
@@ -199,6 +244,19 @@ impl ModelSelection {
     pub fn requested(model: impl Into<String>) -> Self {
         Self {
             requested_model: model.into(),
+            reasoning_effort: None,
+            reported_served_model: None,
+            serving_identity_status: ServingIdentityStatus::Unknown,
+        }
+    }
+
+    pub fn requested_with_effort(
+        model: impl Into<String>,
+        reasoning_effort: impl Into<String>,
+    ) -> Self {
+        Self {
+            requested_model: model.into(),
+            reasoning_effort: Some(reasoning_effort.into()),
             reported_served_model: None,
             serving_identity_status: ServingIdentityStatus::Unknown,
         }
@@ -241,6 +299,8 @@ pub struct ProviderConfig {
     pub provider: ProviderKind,
     pub executable: PathBuf,
     pub model_default: String,
+    #[serde(default)]
+    pub reasoning_effort_default: String,
     pub enabled: bool,
     pub timeout_ms: u64,
     pub config_dir: Option<PathBuf>,
@@ -257,6 +317,13 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
+    pub fn normalize_defaults(&mut self) {
+        if self.reasoning_effort_default.trim().is_empty() {
+            self.reasoning_effort_default =
+                default_reasoning_effort_for_model(&self.provider, &self.model_default).to_string();
+        }
+    }
+
     pub fn defaults() -> Vec<Self> {
         let local_app_data = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
@@ -267,6 +334,7 @@ impl ProviderConfig {
                 provider: ProviderKind::Claude,
                 executable: PathBuf::from("claude.exe"),
                 model_default: "claude-haiku-4-5-20251001".to_string(),
+                reasoning_effort_default: "high".to_string(),
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: Some(local_app_data.join("council").join("claude-cfg")),
@@ -284,6 +352,7 @@ impl ProviderConfig {
                 provider: ProviderKind::Antigravity,
                 executable: PathBuf::from("agy.exe"),
                 model_default: "gemini-3.7-flash-low".to_string(),
+                reasoning_effort_default: "medium".to_string(),
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: None,
@@ -306,6 +375,7 @@ impl ProviderConfig {
                 provider: ProviderKind::CodexWsl,
                 executable: PathBuf::from("wsl.exe"),
                 model_default: "gpt-5.6-luna".to_string(),
+                reasoning_effort_default: "max".to_string(),
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: None,

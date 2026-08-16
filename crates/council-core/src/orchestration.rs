@@ -479,6 +479,7 @@ mod tests {
         ProviderCallRequest {
             provider,
             model: "test-model".to_string(),
+            reasoning_effort: "medium".to_string(),
             turn_id: None,
             packet_path: PathBuf::from("packet.md"),
             packet_directory: PathBuf::from("."),

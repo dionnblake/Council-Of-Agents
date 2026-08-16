@@ -39,6 +39,7 @@ type ProviderSetting = {
   provider: string;
   executable: string;
   model_default: string;
+  reasoning_effort_default: string;
   enabled: boolean;
   timeout_ms: number;
   config_dir: string | null;
@@ -54,6 +55,117 @@ type ProviderSetting = {
 };
 
 type SettingsView = { providers: ProviderSetting[]; export_directory: string };
+
+type ModelOption = { value: string; label: string };
+
+const MODEL_OPTIONS: Record<string, ModelOption[]> = {
+  CLAUDE: [
+    { value: "claude-haiku-4-5-20251001", label: "Haiku · certified default" },
+    { value: "sonnet", label: "Sonnet · latest alias" },
+    { value: "opus", label: "Opus · latest alias" },
+  ],
+  ANTIGRAVITY: [
+    { value: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash · High" },
+    { value: "gemini-3.7-flash-medium", label: "Gemini 3.7 Flash · Medium" },
+    { value: "gemini-3.7-flash-low", label: "Gemini 3.7 Flash · Low" },
+    { value: "gemini-3.6-flash-high", label: "Gemini 3.6 Flash · High" },
+    { value: "gemini-3.6-flash-medium", label: "Gemini 3.6 Flash · Medium" },
+    { value: "gemini-3.6-flash-low", label: "Gemini 3.6 Flash · Low" },
+    { value: "gemini-3.5-flash-high", label: "Gemini 3.5 Flash · High" },
+    { value: "gemini-3.5-flash-medium", label: "Gemini 3.5 Flash · Medium" },
+    { value: "gemini-3.5-flash-low", label: "Gemini 3.5 Flash · Low" },
+    { value: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro · High" },
+    { value: "gemini-3.1-pro-low", label: "Gemini 3.1 Pro · Low" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 · Thinking" },
+    { value: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 · Thinking" },
+    { value: "gpt-oss-120b-medium", label: "GPT-OSS 120B · Medium" },
+  ],
+  CODEX_WSL: [
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna · certified default" },
+    { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+  ],
+};
+
+const LEVEL_OPTIONS: Record<string, ModelOption[]> = {
+  CLAUDE: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra high" },
+    { value: "max", label: "Max" },
+  ],
+  ANTIGRAVITY: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+  ],
+  CODEX_WSL: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra high" },
+    { value: "max", label: "Max · Luna default" },
+  ],
+};
+
+const CODEX_ULTRA_MODELS = new Set(["gpt-5.6-sol", "gpt-5.6-terra"]);
+
+function modelOptionsFor(provider: string, current: string) {
+  const options = MODEL_OPTIONS[provider] ?? [];
+  return current && !options.some((option) => option.value === current)
+    ? [{ value: current, label: `${current} · saved value` }, ...options]
+    : options;
+}
+
+function ModelSelect(props: { provider: string; value: string; onChange: (value: string) => void; className?: string }) {
+  return (
+    <select
+      className={`${props.className ?? "text-input"} model-select`}
+      value={props.value}
+      onChange={(event) => props.onChange(event.target.value)}
+      aria-label={`${props.provider.replaceAll("_", " ")} model`}
+    >
+      {modelOptionsFor(props.provider, props.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  );
+}
+
+function baseLevelOptionsFor(provider: string, model: string) {
+  const options = LEVEL_OPTIONS[provider] ?? [];
+  if (provider === "CODEX_WSL" && CODEX_ULTRA_MODELS.has(model)) {
+    return [...options, { value: "ultra", label: "Ultra · auto-delegation" }];
+  }
+  return options;
+}
+
+function defaultLevelFor(provider: string, model: string) {
+  if (provider === "CODEX_WSL" && model === "gpt-5.6-sol") return "low";
+  if (provider === "CODEX_WSL" && model === "gpt-5.6-terra") return "medium";
+  if (provider === "CODEX_WSL") return "max";
+  if (provider === "ANTIGRAVITY") return "medium";
+  return "high";
+}
+
+function levelOptionsFor(provider: string, model: string, current: string) {
+  const options = baseLevelOptionsFor(provider, model);
+  return current && !options.some((option) => option.value === current)
+    ? [{ value: current, label: `${current} · saved value` }, ...options]
+    : options;
+}
+
+function LevelSelect(props: { provider: string; model: string; value: string; onChange: (value: string) => void; className?: string }) {
+  return (
+    <select
+      className={`${props.className ?? "text-input"} level-select`}
+      value={props.value}
+      onChange={(event) => props.onChange(event.target.value)}
+      aria-label={`${props.provider.replaceAll("_", " ")} model level`}
+    >
+      {levelOptionsFor(props.provider, props.model, props.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  );
+}
 
 type TurnSummary = {
   provider: string;
@@ -230,6 +342,11 @@ function App() {
     antigravity: "gemini-3.7-flash-low",
     "codex-wsl": "gpt-5.6-luna",
   });
+  const [levels, setLevels] = useState({
+    claude: "high",
+    antigravity: "medium",
+    "codex-wsl": "max",
+  });
   const [notice, setNotice] = useState("Runtime is in preview mode until the Tauri shell is launched.");
   const [settingsView, setSettingsView] = useState<SettingsView | null>(null);
   const [uiZoom, setUiZoom] = useState(1);
@@ -292,17 +409,29 @@ function App() {
     invoke<SettingsView>("settings")
       .then((result) => {
         setSettingsView(result);
-        setModels((current) => {
-          const next = { ...current };
-          result.providers.forEach((provider) => {
-            const key = (provider.provider === "CODEX_WSL" ? "codex-wsl" : provider.provider.toLowerCase()) as keyof typeof next;
-            if (key in next) next[key] = provider.model_default;
-          });
-          return next;
-        });
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!settingsView) return;
+    setModels((current) => {
+      const next = { ...current };
+      settingsView.providers.forEach((provider) => {
+        const key = (provider.provider === "CODEX_WSL" ? "codex-wsl" : provider.provider.toLowerCase()) as keyof typeof next;
+        if (key in next) next[key] = provider.model_default;
+      });
+      return next;
+    });
+    setLevels((current) => {
+      const next = { ...current };
+      settingsView.providers.forEach((provider) => {
+        const key = (provider.provider === "CODEX_WSL" ? "codex-wsl" : provider.provider.toLowerCase()) as keyof typeof next;
+        if (key in next) next[key] = provider.reasoning_effort_default;
+      });
+      return next;
+    });
+  }, [settingsView]);
 
   async function refreshPositions(debateId: string) {
     if (debateId === "preview-debate") return;
@@ -362,7 +491,17 @@ function App() {
     await refreshDebateSummary(item.id);
   }
 
-  const readyCount = useMemo(() => providers.filter((provider) => provider.state === "READY").length, [providers]);
+  const seatReadiness = useMemo(() => {
+    const ready = providers.filter((provider) => provider.state === "READY").length;
+    const limited = providers.filter((provider) => provider.state === "LIMITED").length;
+    const unavailable = providers.filter((provider) => provider.state === "NOT_READY").length;
+    const checking = providers.filter((provider) => provider.state === "CHECKING").length;
+    const details = [`${ready + limited} available`];
+    if (limited > 0) details.push(`${limited} limited`);
+    if (unavailable > 0) details.push(`${unavailable} unavailable`);
+    if (checking > 0) details.push(`${checking} checking`);
+    return { count: providers.length, label: details.join(" · ") };
+  }, [providers]);
 
   const nextRound = useMemo(() => {
     if (!debate) return null;
@@ -397,7 +536,7 @@ function App() {
       return;
     }
     try {
-      const created = await invoke<DebateSummary>("create_debate", { intake, modelOverrides: models, independentOnly, enabledProviders });
+      const created = await invoke<DebateSummary>("create_debate", { intake, modelOverrides: models, reasoningEffortOverrides: levels, independentOnly, enabledProviders });
       setDebate(created);
       setRecentDebates((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setDiscovery(null);
@@ -589,7 +728,10 @@ function App() {
           <div className="boundary-topline"><span className="status-dot good" />BOUNDARY STATUS</div>
           <div className="boundary-title">LOCAL / SEALED</div>
           <p>Packets are immutable. Evidence is cited by file and line range.</p>
-          <div className="boundary-foot"><span>3 seats</span><span>{readyCount}/3 ready</span></div>
+          <div className="boundary-foot" aria-label={`Provider seats: ${seatReadiness.label}`}>
+            <span>{seatReadiness.count} seats</span>
+            <span>{seatReadiness.label}</span>
+          </div>
         </div>
         <button className={`nav-item settings-link ${screen === "settings" ? "active" : ""}`} onClick={() => setScreen("settings")}>
           <span className="nav-icon">⚙</span><span>Settings</span>
@@ -605,7 +747,7 @@ function App() {
 
         <div className="content-scroll">
           {screen === "home" && <HomeScreen providers={providers} setScreen={setScreen} debate={debate} recentDebates={recentDebates} openDebate={openDebate} />}
-          {screen === "new" && <LiveNewDebateScreen question={question} setQuestion={setQuestion} mode={mode} setMode={setMode} independentOnly={independentOnly} setIndependentOnly={setIndependentOnly} productType={productType} setProductType={setProductType} decisionType={decisionType} setDecisionType={setDecisionType} priority={priority} setPriority={setPriority} constraints={constraints} setConstraints={setConstraints} optionA={optionA} setOptionA={setOptionA} optionB={optionB} setOptionB={setOptionB} repository={repository} setRepository={setRepository} currentLeaning={currentLeaning} setCurrentLeaning={setCurrentLeaning} currentLeaningReason={currentLeaningReason} setCurrentLeaningReason={setCurrentLeaningReason} enabledProviders={enabledProviders} setEnabledProviders={setEnabledProviders} models={models} setModels={setModels} startDebate={startDebate} />}
+          {screen === "new" && <LiveNewDebateScreen question={question} setQuestion={setQuestion} mode={mode} setMode={setMode} independentOnly={independentOnly} setIndependentOnly={setIndependentOnly} productType={productType} setProductType={setProductType} decisionType={decisionType} setDecisionType={setDecisionType} priority={priority} setPriority={setPriority} constraints={constraints} setConstraints={setConstraints} optionA={optionA} setOptionA={setOptionA} optionB={optionB} setOptionB={setOptionB} repository={repository} setRepository={setRepository} currentLeaning={currentLeaning} setCurrentLeaning={setCurrentLeaning} currentLeaningReason={currentLeaningReason} setCurrentLeaningReason={setCurrentLeaningReason} enabledProviders={enabledProviders} setEnabledProviders={setEnabledProviders} models={models} setModels={setModels} levels={levels} setLevels={setLevels} startDebate={startDebate} />}
           {screen === "debate" && <LiveDebateScreen providers={providers} debate={debate} runSummary={runSummary} discovery={discovery} positions={positions} nextRound={nextRound} snapshotReview={snapshotReview} decideSnapshotReview={decideSnapshotReview} degradedRationale={degradedRationale} setDegradedRationale={setDegradedRationale} dispatchRound={dispatchRound} resumeDebate={resumeDebate} proceedDegraded={proceedDegraded} cancelDebate={cancelDebate} setScreen={setScreen} />}
           {screen === "decision" && <LiveDecisionScreen debate={debate} runSummary={runSummary} positions={positions} evidence={evidence} decisionRationale={decisionRationale} setDecisionRationale={setDecisionRationale} decisionKind={decisionKind} setDecisionKind={setDecisionKind} selectedOption={selectedOption} setSelectedOption={setSelectedOption} modifiedDecision={modifiedDecision} setModifiedDecision={setModifiedDecision} decisionRecord={decisionRecord} exportSummary={exportSummary} recordDecision={recordDecision} compileExport={compileExport} dispatchRound={dispatchRound} setScreen={setScreen} />}
           {screen === "export" && <ExportScreen exportSummary={exportSummary} debate={debate} />}
@@ -660,7 +802,17 @@ function SettingsScreen({ providers, settingsView, setSettingsView }: { provider
   useEffect(() => setDraft(settingsView), [settingsView]);
   if (!draft) return <section className="page page-settings"><div className="empty-state"><p>Settings are available in the Tauri desktop shell.</p></div></section>;
   const activeDraft = draft;
-  const updateProvider = (index: number, patch: Partial<ProviderSetting>) => setDraft({ ...activeDraft, providers: activeDraft.providers.map((provider, providerIndex) => providerIndex === index ? { ...provider, ...patch } : provider) });
+  const updateProvider = (index: number, patch: Partial<ProviderSetting>) => setDraft({
+    ...activeDraft,
+    providers: activeDraft.providers.map((provider, providerIndex) => {
+      if (providerIndex !== index) return provider;
+      const next = { ...provider, ...patch };
+      if (patch.model_default && !baseLevelOptionsFor(provider.provider, patch.model_default).some((option) => option.value === next.reasoning_effort_default)) {
+        next.reasoning_effort_default = defaultLevelFor(provider.provider, patch.model_default);
+      }
+      return next;
+    }),
+  });
   async function save() {
     try {
       const saved = await invoke<SettingsView>("save_settings", { input: { providers: activeDraft.providers, exportDirectory: activeDraft.export_directory } });
@@ -671,7 +823,7 @@ function SettingsScreen({ providers, settingsView, setSettingsView }: { provider
       setMessage("Settings were not saved: " + String(error));
     }
   }
-  return <section className="page page-settings"><div className="eyebrow"><span className="eyebrow-line" />SETTINGS / CERTIFICATION</div><div className="settings-header"><div><h1>Runtime boundaries.</h1><p>Provider locations, models, timeouts, certification, and export routing are persisted locally. Codex's isolation boundary is fixed.</p></div><span className="settings-lock">⌁ LOCAL ONLY</span></div><div className="settings-list">{providers.map((provider) => <div className="settings-row" key={provider.provider}><div className={`provider-glyph glyph-${provider.provider.toLowerCase()}`}>{provider.provider[0]}</div><div className="settings-provider"><strong>{provider.label}</strong><span>{provider.provider === "CODEX_WSL" ? "CouncilCodexWSL / council / read-only" : provider.detail}</span></div><div className="settings-model"><span>REQUESTED MODEL</span><strong>{provider.requested}</strong><small>{provider.auth.replaceAll("_", " ")}</small></div><div className="settings-cert"><span className={`state-badge ${statusClass(provider.state)}`}><i />{provider.state.replace("_", " ")}</span><small>{provider.certification.replaceAll("_", " ")}</small></div></div>)}</div><div className="settings-editor">{draft.providers.map((provider, index) => <div className="settings-editor-card" key={provider.provider}><div className="panel-heading"><div><span className="section-kicker">{provider.provider.replaceAll("_", " ")}</span><h2>{provider.provider === "CODEX_WSL" ? "Dedicated Linux seat" : "Provider runtime"}</h2></div><label className="toggle-line"><input type="checkbox" checked={provider.enabled} onChange={(event) => updateProvider(index, { enabled: event.target.checked })} /><span>Available for new debates</span></label></div><div className="form-two-up"><label className="field-label">EXECUTABLE<input className="text-input" value={provider.executable} disabled={provider.provider === "CODEX_WSL"} onChange={(event) => updateProvider(index, { executable: event.target.value })} /></label><label className="field-label">DEFAULT MODEL<input className="text-input" value={provider.model_default} onChange={(event) => updateProvider(index, { model_default: event.target.value })} /></label></div><div className="form-two-up"><label className="field-label">TIMEOUT MS<input className="text-input" type="number" min={1000} max={900000} value={provider.timeout_ms} onChange={(event) => updateProvider(index, { timeout_ms: Number(event.target.value) })} /></label><label className="field-label">ISOLATION / CONFIG PATH<input className="text-input" value={provider.provider === "CODEX_WSL" ? (provider.codex_home ?? "") : (provider.config_dir ?? "")} disabled={provider.provider === "CODEX_WSL"} onChange={(event) => updateProvider(index, provider.provider === "CODEX_WSL" ? {} : { config_dir: event.target.value || null })} /></label></div>{provider.provider === "ANTIGRAVITY" ? <label className="field-label">CREDIT GUARD SETTINGS PATH<input className="text-input" value={provider.safety_config_path ?? ""} onChange={(event) => updateProvider(index, { safety_config_path: event.target.value || null })} placeholder="Optional settings.json path" /></label> : null}{provider.provider === "CODEX_WSL" ? <div className="field-hint">Fixed certified boundary: CouncilCodexWSL, Linux user council, HOME /home/council, CODEX_HOME /home/council/.codex, no Windows mounts or inherited PATH.</div> : null}</div>)}</div><label className="field-label export-setting">EXPORT DIRECTORY<input className="text-input" value={draft.export_directory} onChange={(event) => setDraft({ ...draft, export_directory: event.target.value })} /></label><div className="form-actions"><button className="primary-button" onClick={save}><span>Save local settings</span><b>✓</b></button></div>{message ? <div className="settings-note"><span>i</span><p>{message}</p></div> : null}<div className="settings-note"><span>!</span><p><strong>Declared limitation</strong> means the provider is usable under a known boundary, but the product will keep that limitation visible in every debate record.</p></div></section>;
+  return <section className="page page-settings"><div className="eyebrow"><span className="eyebrow-line" />SETTINGS / CERTIFICATION</div><div className="settings-header"><div><h1>Runtime boundaries.</h1><p>Provider locations, models, levels, timeouts, certification, and export routing are persisted locally. Codex's isolation boundary is fixed.</p></div><span className="settings-lock">⌁ LOCAL ONLY</span></div><div className="settings-list">{providers.map((provider) => <div className="settings-row" key={provider.provider}><div className={`provider-glyph glyph-${provider.provider.toLowerCase()}`}>{provider.provider[0]}</div><div className="settings-provider"><strong>{provider.label}</strong><span>{provider.provider === "CODEX_WSL" ? "CouncilCodexWSL / council / read-only" : provider.detail}</span></div><div className="settings-model"><span>REQUESTED MODEL</span><strong>{provider.requested}</strong><small>{provider.auth.replaceAll("_", " ")}</small></div><div className="settings-cert"><span className={`state-badge ${statusClass(provider.state)}`}><i />{provider.state.replace("_", " ")}</span><small>{provider.certification.replaceAll("_", " ")}</small></div></div>)}</div><div className="settings-editor">{draft.providers.map((provider, index) => <div className="settings-editor-card" key={provider.provider}><div className="panel-heading"><div><span className="section-kicker">{provider.provider.replaceAll("_", " ")}</span><h2>{provider.provider === "CODEX_WSL" ? "Dedicated Linux seat" : "Provider runtime"}</h2></div><label className="toggle-line"><input type="checkbox" checked={provider.enabled} onChange={(event) => updateProvider(index, { enabled: event.target.checked })} /><span>Available for new debates</span></label></div><div className="form-two-up"><label className="field-label">EXECUTABLE<input className="text-input" value={provider.executable} disabled={provider.provider === "CODEX_WSL"} onChange={(event) => updateProvider(index, { executable: event.target.value })} /></label><label className="field-label">DEFAULT MODEL<ModelSelect provider={provider.provider} value={provider.model_default} onChange={(value) => updateProvider(index, { model_default: value })} /></label></div><div className="form-two-up"><label className="field-label">TIMEOUT MS<input className="text-input" type="number" min={1000} max={900000} value={provider.timeout_ms} onChange={(event) => updateProvider(index, { timeout_ms: Number(event.target.value) })} /></label><label className="field-label">ISOLATION / CONFIG PATH<input className="text-input" value={provider.provider === "CODEX_WSL" ? (provider.codex_home ?? "") : (provider.config_dir ?? "")} disabled={provider.provider === "CODEX_WSL"} onChange={(event) => updateProvider(index, provider.provider === "CODEX_WSL" ? {} : { config_dir: event.target.value || null })} /></label></div><label className="field-label model-level-setting">MODEL LEVEL<LevelSelect provider={provider.provider} model={provider.model_default} value={provider.reasoning_effort_default} onChange={(value) => updateProvider(index, { reasoning_effort_default: value })} /></label>{provider.provider === "ANTIGRAVITY" ? <label className="field-label">CREDIT GUARD SETTINGS PATH<input className="text-input" value={provider.safety_config_path ?? ""} onChange={(event) => updateProvider(index, { safety_config_path: event.target.value || null })} placeholder="Optional settings.json path" /></label> : null}{provider.provider === "CODEX_WSL" ? <div className="field-hint">Fixed certified boundary: CouncilCodexWSL, Linux user council, HOME /home/council, CODEX_HOME /home/council/.codex, no Windows mounts or inherited PATH.</div> : null}</div>)}</div><label className="field-label export-setting">EXPORT DIRECTORY<input className="text-input" value={draft.export_directory} onChange={(event) => setDraft({ ...draft, export_directory: event.target.value })} /></label><div className="form-actions"><button className="primary-button" onClick={save}><span>Save local settings</span><b>✓</b></button></div>{message ? <div className="settings-note"><span>i</span><p>{message}</p></div> : null}<div className="settings-note"><span>!</span><p><strong>Declared limitation</strong> means the provider is usable under a known boundary, but the product will keep that limitation visible in every debate record.</p></div></section>;
 }
 
 function LiveNewDebateScreen(props: {
@@ -703,10 +855,19 @@ function LiveNewDebateScreen(props: {
   setEnabledProviders: (value: string[]) => void;
   models: { claude: string; antigravity: string; "codex-wsl": string };
   setModels: (value: { claude: string; antigravity: string; "codex-wsl": string }) => void;
+  levels: { claude: string; antigravity: string; "codex-wsl": string };
+  setLevels: (value: { claude: string; antigravity: string; "codex-wsl": string }) => void;
   startDebate: () => void;
 }) {
   const updateModel = (key: "claude" | "antigravity" | "codex-wsl", value: string) => {
     props.setModels({ ...props.models, [key]: value });
+    if (!baseLevelOptionsFor(key === "codex-wsl" ? "CODEX_WSL" : key.toUpperCase(), value).some((option) => option.value === props.levels[key])) {
+      const provider = key === "codex-wsl" ? "CODEX_WSL" : key.toUpperCase();
+      props.setLevels({ ...props.levels, [key]: defaultLevelFor(provider, value) });
+    }
+  };
+  const updateLevel = (key: "claude" | "antigravity" | "codex-wsl", value: string) => {
+    props.setLevels({ ...props.levels, [key]: value });
   };
   return (
     <section className="page page-form">
@@ -727,7 +888,7 @@ function LiveNewDebateScreen(props: {
           <label className="field-label">COUNCIL SEATS <span>EXPLICIT / NO SILENT DEGRADATION</span></label><div className="seat-selector">{[["claude", "Claude Code"], ["antigravity", "Antigravity CLI"], ["codex-wsl", "Codex WSL"]].map(([value, label]) => <label className="toggle-line" key={value}><input type="checkbox" checked={props.enabledProviders.includes(value)} onChange={(event) => props.setEnabledProviders(event.target.checked ? [...props.enabledProviders, value] : props.enabledProviders.filter((provider) => provider !== value))} /><span>{label}</span></label>)}</div><div className="field-hint">Choose exactly two or three seats. A two-seat council is labeled degraded in the record and is never inferred from a failed provider.</div>
           <div className="form-actions"><button className="secondary-button" onClick={() => props.setQuestion("")}>Clear</button><button className="primary-button" onClick={props.startDebate}><span>Open controlled debate</span><b>↗</b></button></div>
         </div>
-        <aside className="form-aside"><div className="aside-number">01</div><h3>Same packet.<br /><em>Independent reads.</em></h3><p>Each provider receives a fresh process, the same immutable evidence, and the same response contract.</p><div className="aside-divider" /><div className="aside-check"><span>✓</span><p>Claude Code<br /><small>isolated local config</small></p></div><div className="aside-check"><span>✓</span><p>Antigravity CLI<br /><small>credit guard enforced</small></p></div><div className="aside-check"><span>✓</span><p>Codex WSL<br /><small>dedicated Linux boundary</small></p></div><div className="aside-divider" /><label className="field-label">REQUESTED MODELS</label><div className="model-stack"><label>CLAUDE<input className="text-input" value={props.models.claude} onChange={(event) => updateModel("claude", event.target.value)} /></label><label>ANTIGRAVITY<input className="text-input" value={props.models.antigravity} onChange={(event) => updateModel("antigravity", event.target.value)} /></label><label>CODEX WSL<input className="text-input" value={props.models["codex-wsl"]} onChange={(event) => updateModel("codex-wsl", event.target.value)} /></label></div></aside>
+      <aside className="form-aside"><div className="aside-number">01</div><h3>Same packet.<br /><em>Independent reads.</em></h3><p>Each provider receives a fresh process, the same immutable evidence, and the same response contract.</p><div className="aside-divider" /><div className="aside-check"><span>✓</span><p>Claude Code<br /><small>isolated local config</small></p></div><div className="aside-check"><span>✓</span><p>Antigravity CLI<br /><small>credit guard enforced</small></p></div><div className="aside-check"><span>✓</span><p>Codex WSL<br /><small>dedicated Linux boundary</small></p></div><div className="aside-divider" /><label className="field-label">REQUESTED MODELS + LEVELS</label><div className="model-stack"><div className="model-choice"><label>CLAUDE<ModelSelect provider="CLAUDE" value={props.models.claude} onChange={(value) => updateModel("claude", value)} /></label><label>MODEL LEVEL<LevelSelect provider="CLAUDE" model={props.models.claude} value={props.levels.claude} onChange={(value) => updateLevel("claude", value)} /></label></div><div className="model-choice"><label>ANTIGRAVITY<ModelSelect provider="ANTIGRAVITY" value={props.models.antigravity} onChange={(value) => updateModel("antigravity", value)} /></label><label>MODEL LEVEL<LevelSelect provider="ANTIGRAVITY" model={props.models.antigravity} value={props.levels.antigravity} onChange={(value) => updateLevel("antigravity", value)} /></label></div><div className="model-choice"><label>CODEX WSL<ModelSelect provider="CODEX_WSL" value={props.models["codex-wsl"]} onChange={(value) => updateModel("codex-wsl", value)} /></label><label>MODEL LEVEL<LevelSelect provider="CODEX_WSL" model={props.models["codex-wsl"]} value={props.levels["codex-wsl"]} onChange={(value) => updateLevel("codex-wsl", value)} /></label></div></div></aside>
       </div>
     </section>
   );

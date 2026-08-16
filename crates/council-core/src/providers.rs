@@ -4,7 +4,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-use crate::model::{FailureType, ProviderConfig, ProviderKind, ServingIdentityStatus};
+use crate::model::{
+    FailureType, ProviderConfig, ProviderKind, ServingIdentityStatus,
+    supported_reasoning_efforts_for_model,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -28,6 +31,8 @@ pub struct CommandInvocation {
 pub struct ProviderCallRequest {
     pub provider: ProviderKind,
     pub model: String,
+    #[serde(default)]
+    pub reasoning_effort: String,
     #[serde(default)]
     pub turn_id: Option<String>,
     pub packet_path: PathBuf,
@@ -112,7 +117,10 @@ impl ProviderRegistry {
         Self {
             configs: configs
                 .into_iter()
-                .map(|config| (config.provider.clone(), config))
+                .map(|mut config| {
+                    config.normalize_defaults();
+                    (config.provider.clone(), config)
+                })
                 .collect(),
         }
     }
@@ -181,6 +189,7 @@ impl ProviderRegistry {
         request: &ProviderCallRequest,
     ) -> Result<CommandSpec, ProviderError> {
         self.validate_subscription_routing(&request.provider)?;
+        validate_reasoning_effort(&request.provider, &request.model, &request.reasoning_effort)?;
         let config = self.config(&request.provider).ok_or_else(|| {
             ProviderError::InvalidConfiguration(request.provider.slug().to_string())
         })?;
@@ -276,6 +285,24 @@ pub fn validate_provider_extra_args(extra_args: &[String]) -> Result<(), Provide
         }
     }
     Ok(())
+}
+
+pub fn validate_reasoning_effort(
+    provider: &ProviderKind,
+    model: &str,
+    reasoning_effort: &str,
+) -> Result<(), ProviderError> {
+    if supported_reasoning_efforts_for_model(provider, model).contains(&reasoning_effort) {
+        Ok(())
+    } else {
+        Err(ProviderError::InvalidConfiguration(format!(
+            "{} model {} does not support reasoning level {:?}; supported levels: {}",
+            provider.slug(),
+            model,
+            reasoning_effort,
+            supported_reasoning_efforts_for_model(provider, model).join(", ")
+        )))
+    }
 }
 
 pub fn validate_subscription_configuration(config: &ProviderConfig) -> Result<(), ProviderError> {
@@ -376,6 +403,8 @@ fn build_codex_command(
         linux_path(linux_working_directory),
         "-m".to_string(),
         request.model.clone(),
+        "-c".to_string(),
+        format!("model_reasoning_effort=\"{}\"", request.reasoning_effort),
         "--output-schema".to_string(),
         linux_path(linux_schema),
         "-".to_string(),
@@ -453,6 +482,8 @@ fn build_claude_command(
         schema_text,
         "--model".to_string(),
         request.model.clone(),
+        "--effort".to_string(),
+        request.reasoning_effort.clone(),
         "--add-dir".to_string(),
         request.packet_directory.to_string_lossy().to_string(),
     ];
@@ -486,6 +517,8 @@ fn build_antigravity_command(
         request.prompt.clone(),
         "--model".to_string(),
         request.model.clone(),
+        "--effort".to_string(),
+        request.reasoning_effort.clone(),
         "--output-format".to_string(),
         "json".to_string(),
         "--json-schema".to_string(),
@@ -709,6 +742,7 @@ mod tests {
         let request = ProviderCallRequest {
             provider: ProviderKind::CodexWsl,
             model: "gpt-5.6-luna".to_string(),
+            reasoning_effort: "max".to_string(),
             turn_id: None,
             packet_path: PathBuf::from("C:\\council\\packet\\one.md"),
             packet_directory: PathBuf::from("C:\\council\\packet"),
@@ -731,6 +765,7 @@ mod tests {
         assert!(command.args[3].contains("CouncilCodexWSL"));
         assert!(command.args[3].contains("read-only"));
         assert!(command.args[3].contains("--ephemeral"));
+        assert!(command.args[3].contains("model_reasoning_effort=\"max\""));
         assert!(command.args[3].ends_with(" -"));
         assert!(command.prompt_via_stdin);
         assert!(!command.windows_job_containment);
@@ -791,6 +826,7 @@ mod tests {
         let base_request = ProviderCallRequest {
             provider: ProviderKind::Claude,
             model: "test-model".to_string(),
+            reasoning_effort: "high".to_string(),
             turn_id: None,
             packet_path: PathBuf::from("C:\\council\\packet\\one.md"),
             packet_directory: PathBuf::from("C:\\council\\packet"),
@@ -813,13 +849,43 @@ mod tests {
             ProviderKind::CodexWsl,
         ] {
             let mut request = base_request.clone();
-            request.provider = provider;
+            request.provider = provider.clone();
             let command = registry.build_command(&request).unwrap();
+            match provider {
+                ProviderKind::Claude | ProviderKind::Antigravity => {
+                    assert!(
+                        command
+                            .args
+                            .windows(2)
+                            .any(|pair| { pair[0] == "--effort" && pair[1] == "high" })
+                    );
+                }
+                ProviderKind::CodexWsl => {
+                    assert!(command.args[3].contains("model_reasoning_effort=\"high\""));
+                }
+            }
             for key in BLOCKED_BILLING_ENVIRONMENT_KEYS {
                 assert!(!command.environment.contains_key(*key), "{key}");
             }
             validate_provider_environment(&command.environment).unwrap();
         }
+    }
+
+    #[test]
+    fn reasoning_effort_validation_is_provider_specific() {
+        validate_reasoning_effort(&ProviderKind::Claude, "sonnet", "max").unwrap();
+        validate_reasoning_effort(&ProviderKind::CodexWsl, "gpt-5.6-luna", "xhigh").unwrap();
+        validate_reasoning_effort(&ProviderKind::CodexWsl, "gpt-5.6-sol", "ultra").unwrap();
+        validate_reasoning_effort(&ProviderKind::Antigravity, "gemini-3.7-flash-low", "high")
+            .unwrap();
+        assert!(
+            validate_reasoning_effort(&ProviderKind::CodexWsl, "gpt-5.6-luna", "ultra").is_err()
+        );
+        assert!(
+            validate_reasoning_effort(&ProviderKind::Antigravity, "gemini-3.7-flash-low", "max")
+                .is_err()
+        );
+        assert!(validate_reasoning_effort(&ProviderKind::Claude, "sonnet", "unlimited").is_err());
     }
 
     #[test]
