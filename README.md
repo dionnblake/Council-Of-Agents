@@ -41,6 +41,7 @@ Provider execution is opt-in from the desktop round controls. A live three-seat 
 - Repository snapshots are copied, hashed, scanned, and sealed read-only.
 - Provider configuration and instruction surfaces are excluded from snapshots.
 - Provider environments use explicit allowlists.
+- The runner clears inherited variables before applying each command spec; configured API-key, custom-base-URL, and alternate-routing arguments fail closed.
 - Codex runs only inside CouncilCodexWSL with /mnt/c and Windows interop disabled.
 - Subscription authentication is used. API-key billing is not a Council fallback.
 - Council never edits code, creates branches, commits, pushes, deploys, or opens another coding harness.
@@ -75,7 +76,7 @@ npx tauri dev --no-watch
 Pop-Location
 ~~~
 
-The native smoke path requires the Windows WebView2 runtime. Provider dispatch remains opt-in and is blocked when unsafe billing/routing variables are present.
+The native smoke path requires the Windows WebView2 runtime. Provider dispatch remains opt-in. Ambient host credentials are not a dispatch blocker or an input: they are excluded from the effective provider environment, while prohibited values persisted in provider configuration fail closed.
 
 ## Evidence
 

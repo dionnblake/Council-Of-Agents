@@ -61,14 +61,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Providers => {
             let registry = ProviderRegistry::defaults();
             let billing = billing_environment_status();
-            let billing_state = if billing.values().any(|present| *present) {
-                "BLOCKED_ENVIRONMENT_VARIABLE_PRESENT"
+            let routing_state = if registry.validate_all_subscription_routing().is_ok() {
+                "SAFE"
             } else {
-                "SUBSCRIPTION_ONLY_ENVIRONMENT"
+                "BLOCKED"
             };
-            println!("BILLING\t{billing_state}");
+            println!("SUBSCRIPTION ROUTING = {routing_state}");
+            println!(
+                "HOST CREDENTIALS = {}",
+                if billing.values().any(|present| *present) {
+                    "PRESENT BUT NOT INHERITED"
+                } else {
+                    "NONE DETECTED"
+                }
+            );
             for config in registry.all() {
-                let preflight = registry.preflight(&config.provider);
+                let preflight = registry.validate_subscription_routing(&config.provider);
                 println!(
                     "{}\tmodel={}\tcertification={:?}\tpreflight={}",
                     config.provider.display_name(),

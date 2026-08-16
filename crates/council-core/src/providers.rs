@@ -158,19 +158,39 @@ impl ProviderRegistry {
         Ok(())
     }
 
+    pub fn validate_subscription_routing(
+        &self,
+        provider: &ProviderKind,
+    ) -> Result<(), ProviderError> {
+        self.preflight(provider)?;
+        let config = self
+            .config(provider)
+            .ok_or_else(|| ProviderError::InvalidConfiguration(provider.slug().to_string()))?;
+        validate_subscription_configuration(config)
+    }
+
+    pub fn validate_all_subscription_routing(&self) -> Result<(), ProviderError> {
+        for config in self.all() {
+            self.validate_subscription_routing(&config.provider)?;
+        }
+        Ok(())
+    }
+
     pub fn build_command(
         &self,
         request: &ProviderCallRequest,
     ) -> Result<CommandSpec, ProviderError> {
-        self.preflight(&request.provider)?;
+        self.validate_subscription_routing(&request.provider)?;
         let config = self.config(&request.provider).ok_or_else(|| {
             ProviderError::InvalidConfiguration(request.provider.slug().to_string())
         })?;
-        match request.provider {
+        let command = match request.provider {
             ProviderKind::CodexWsl => build_codex_command(config, request),
             ProviderKind::Claude => build_claude_command(config, request),
             ProviderKind::Antigravity => build_antigravity_command(config, request),
-        }
+        }?;
+        validate_provider_environment(&command.environment)?;
+        Ok(command)
     }
 }
 
@@ -189,8 +209,31 @@ pub const BLOCKED_BILLING_ENVIRONMENT_KEYS: &[&str] = &[
     "OPENAI_PROJECT_ID",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_BASE",
     "GOOGLE_API_KEY",
     "GEMINI_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "VERTEXAI_PROJECT",
+    "VERTEXAI_LOCATION",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_API_VERSION",
+    "API_KEY",
+    "BASE_URL",
+    "API_BASE_URL",
+    "CUSTOM_BASE_URL",
+];
+
+const BLOCKED_PROVIDER_ROUTING_ARGUMENTS: &[&str] = &[
+    "--api-key",
+    "--api_key",
+    "--base-url",
+    "--base_url",
+    "--api-base",
+    "--api_base",
+    "--endpoint",
 ];
 
 pub fn billing_environment_status() -> BTreeMap<String, bool> {
@@ -200,16 +243,69 @@ pub fn billing_environment_status() -> BTreeMap<String, bool> {
         .collect()
 }
 
-pub fn ensure_subscription_environment() -> Result<(), ProviderError> {
-    if let Some(key) = BLOCKED_BILLING_ENVIRONMENT_KEYS
-        .iter()
-        .find(|key| std::env::var_os(key).is_some())
-    {
+pub fn validate_provider_environment(
+    environment: &BTreeMap<String, String>,
+) -> Result<(), ProviderError> {
+    if let Some(key) = environment.keys().find(|key| {
+        BLOCKED_BILLING_ENVIRONMENT_KEYS
+            .iter()
+            .any(|blocked| key.eq_ignore_ascii_case(blocked))
+    }) {
         return Err(ProviderError::SafetyPreflight(format!(
-            "{key} is present; account-based subscription execution is required"
+            "prohibited provider environment variable {key} was injected; subscription routing requires an explicit environment allowlist"
         )));
     }
     Ok(())
+}
+
+pub fn validate_provider_extra_args(extra_args: &[String]) -> Result<(), ProviderError> {
+    for argument in extra_args {
+        let normalized = argument.to_ascii_lowercase();
+        if BLOCKED_PROVIDER_ROUTING_ARGUMENTS
+            .iter()
+            .any(|flag| normalized == *flag || normalized.starts_with(&format!("{flag}=")))
+            || normalized.contains("api_key=")
+            || normalized.contains("api-key=")
+            || normalized.contains("base_url=")
+            || normalized.contains("base-url=")
+        {
+            return Err(ProviderError::SafetyPreflight(
+                "provider configuration contains a prohibited API-key or custom-routing argument"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_subscription_configuration(config: &ProviderConfig) -> Result<(), ProviderError> {
+    validate_provider_extra_args(&config.extra_args)?;
+    validate_provider_environment(&effective_provider_environment(config))
+}
+
+pub fn ensure_subscription_environment() -> Result<(), ProviderError> {
+    validate_provider_environment(&safe_host_environment())
+}
+
+fn effective_provider_environment(config: &ProviderConfig) -> BTreeMap<String, String> {
+    let mut environment = safe_host_environment();
+    match config.provider {
+        ProviderKind::Claude => {
+            if let Some(config_dir) = config.config_dir.as_deref() {
+                environment.insert(
+                    "CLAUDE_CONFIG_DIR".to_string(),
+                    config_dir.to_string_lossy().to_string(),
+                );
+            }
+        }
+        ProviderKind::Antigravity => {
+            environment.extend(config.safety_settings.iter().filter_map(|(key, value)| {
+                value.as_str().map(|value| (key.clone(), value.to_string()))
+            }));
+        }
+        ProviderKind::CodexWsl => {}
+    }
+    environment
 }
 
 fn build_codex_command(
@@ -302,7 +398,7 @@ fn build_codex_command(
             "/c".to_string(),
             command_line,
         ],
-        environment: safe_host_environment(),
+        environment: effective_provider_environment(config),
         working_directory: request.working_directory.clone(),
         prompt_via_stdin: true,
         windows_job_containment: false,
@@ -318,9 +414,11 @@ fn build_claude_command(
     config: &ProviderConfig,
     request: &ProviderCallRequest,
 ) -> Result<CommandSpec, ProviderError> {
-    let config_dir = config.config_dir.as_ref().ok_or_else(|| {
-        ProviderError::InvalidConfiguration("missing Claude config directory".to_string())
-    })?;
+    if config.config_dir.is_none() {
+        return Err(ProviderError::InvalidConfiguration(
+            "missing Claude config directory".to_string(),
+        ));
+    }
     let schema_text = std::fs::read_to_string(&request.schema_path).map_err(|error| {
         ProviderError::InvalidConfiguration(format!(
             "cannot read Claude output schema {}: {error}",
@@ -363,11 +461,7 @@ fn build_claude_command(
         args.push(snapshot_path.to_string_lossy().to_string());
     }
     args.extend(config.extra_args.clone());
-    let mut environment = safe_host_environment();
-    environment.insert(
-        "CLAUDE_CONFIG_DIR".to_string(),
-        config_dir.to_string_lossy().to_string(),
-    );
+    let environment = effective_provider_environment(config);
     Ok(CommandSpec {
         program: config.executable.clone(),
         args,
@@ -404,12 +498,7 @@ fn build_antigravity_command(
         args.push(snapshot_path.to_string_lossy().to_string());
     }
     args.extend(config.extra_args.clone());
-    let mut environment = safe_host_environment();
-    environment.extend(
-        config.safety_settings.iter().filter_map(|(key, value)| {
-            value.as_str().map(|value| (key.clone(), value.to_string()))
-        }),
-    );
+    let environment = effective_provider_environment(config);
     Ok(CommandSpec {
         program: config.executable.clone(),
         args,
@@ -451,12 +540,31 @@ fn safe_host_environment() -> BTreeMap<String, String> {
         "USERPROFILE",
         "WINDIR",
     ];
-    ALLOWED
+    let ambient = std::env::vars().collect::<BTreeMap<_, _>>();
+    safe_host_environment_from(ALLOWED, &ambient)
+}
+
+fn safe_host_environment_from(
+    allowed: &[&str],
+    ambient: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    allowed
         .iter()
+        .filter(|key| {
+            !BLOCKED_BILLING_ENVIRONMENT_KEYS
+                .iter()
+                .any(|blocked| key.eq_ignore_ascii_case(blocked))
+        })
         .filter_map(|key| {
-            std::env::var(key)
-                .ok()
-                .map(|value| ((*key).to_string(), value))
+            ambient
+                .get(*key)
+                .or_else(|| {
+                    ambient
+                        .iter()
+                        .find(|(actual, _)| actual.eq_ignore_ascii_case(key))
+                        .map(|(_, value)| value)
+                })
+                .map(|value| ((*key).to_string(), value.clone()))
         })
         .collect()
 }
@@ -626,8 +734,127 @@ mod tests {
         assert!(command.args[3].ends_with(" -"));
         assert!(command.prompt_via_stdin);
         assert!(!command.windows_job_containment);
-        assert!(!command.environment.contains_key("OPENAI_API_KEY"));
+        for key in BLOCKED_BILLING_ENVIRONMENT_KEYS {
+            assert!(!command.environment.contains_key(*key), "{key}");
+        }
         assert!(command.kill_fallback.is_some());
+    }
+
+    #[test]
+    fn ambient_provider_credentials_are_filtered_before_command_creation() {
+        let ambient = BTreeMap::from([
+            ("OPENAI_API_KEY".to_string(), "host-openai".to_string()),
+            (
+                "ANTHROPIC_API_KEY".to_string(),
+                "host-anthropic".to_string(),
+            ),
+            ("GEMINI_API_KEY".to_string(), "host-gemini".to_string()),
+            (
+                "OPENAI_BASE_URL".to_string(),
+                "https://custom.invalid".to_string(),
+            ),
+            ("Path".to_string(), "C:\\Windows\\System32".to_string()),
+        ]);
+        let effective = safe_host_environment_from(
+            &[
+                "Path",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "GEMINI_API_KEY",
+            ],
+            &ambient,
+        );
+        assert_eq!(
+            effective.get("Path"),
+            Some(&"C:\\Windows\\System32".to_string())
+        );
+        for key in [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENAI_BASE_URL",
+        ] {
+            assert!(!effective.contains_key(key), "{key}");
+        }
+
+        let registry = ProviderRegistry::defaults();
+        for config in registry.all() {
+            validate_provider_environment(&effective_provider_environment(config)).unwrap();
+        }
+    }
+
+    #[test]
+    fn every_provider_command_spec_excludes_credentials_and_custom_routes() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let schema_path = tempdir.path().join("position.schema.json");
+        std::fs::write(&schema_path, "{}").unwrap();
+        let base_request = ProviderCallRequest {
+            provider: ProviderKind::Claude,
+            model: "test-model".to_string(),
+            turn_id: None,
+            packet_path: PathBuf::from("C:\\council\\packet\\one.md"),
+            packet_directory: PathBuf::from("C:\\council\\packet"),
+            schema_path,
+            working_directory: PathBuf::from("C:\\council\\scratch"),
+            scratch_directory: PathBuf::from("C:\\council\\scratch"),
+            prompt: "Read the immutable packet at /home/council/council/packet/one.md".to_string(),
+            timeout_ms: 180_000,
+            linux_packet_path: Some(PathBuf::from("/home/council/council/packet/one.md")),
+            linux_working_directory: Some(PathBuf::from("/home/council/council/scratch")),
+            linux_schema_path: Some(PathBuf::from("/home/council/council/schema.json")),
+            snapshot_path: None,
+            linux_snapshot_path: None,
+            snapshot_manifest_hash: None,
+        };
+        let registry = ProviderRegistry::defaults();
+        for provider in [
+            ProviderKind::Claude,
+            ProviderKind::Antigravity,
+            ProviderKind::CodexWsl,
+        ] {
+            let mut request = base_request.clone();
+            request.provider = provider;
+            let command = registry.build_command(&request).unwrap();
+            for key in BLOCKED_BILLING_ENVIRONMENT_KEYS {
+                assert!(!command.environment.contains_key(*key), "{key}");
+            }
+            validate_provider_environment(&command.environment).unwrap();
+        }
+    }
+
+    #[test]
+    fn prohibited_provider_environment_injection_fails_closed() {
+        for key in [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "GEMINI_API_KEY",
+            "CUSTOM_BASE_URL",
+        ] {
+            let environment = BTreeMap::from([(key.to_string(), "redacted".to_string())]);
+            assert!(
+                validate_provider_environment(&environment).is_err(),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn prohibited_custom_routing_arguments_fail_closed() {
+        for argument in [
+            "--base-url=https://custom.invalid".to_string(),
+            "--api-key".to_string(),
+            "api_key=redacted".to_string(),
+        ] {
+            assert!(validate_provider_extra_args(&[argument]).is_err());
+        }
+        assert!(validate_provider_extra_args(&["--strict-config".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn default_subscription_routing_is_safe_for_all_seats() {
+        ProviderRegistry::defaults()
+            .validate_all_subscription_routing()
+            .unwrap();
     }
 
     #[test]

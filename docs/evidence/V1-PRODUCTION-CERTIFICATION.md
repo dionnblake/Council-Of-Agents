@@ -11,7 +11,7 @@ This record separates implementation evidence, automated evidence, current-host 
 
 ```text
 V1_STATUS = RELEASE_CANDIDATE
-DEFINITION_OF_DONE = NOT MET: current-host authenticated three-seat R1/R2/R3 execution, final positions, human decision, deterministic export, and live provider cancellation/recovery remain untested
+DEFINITION_OF_DONE = NOT MET: the current repository-grounded run stopped at the mandatory secret-review gate before provider dispatch; R1/R2/R3 positions, human decision, deterministic export, and live provider cancellation/recovery remain untested
 M1 = NOT_STARTED
 ```
 
@@ -20,17 +20,18 @@ M1 = NOT_STARTED
 | Gate | Classification | Evidence and boundary |
 |---|---|---|
 | Rust controller, persistence, provider contracts, snapshot/packet controls, human gate, and manual export boundary | IMPLEMENTED | Repository source and Rust checks; Rust remains policy authority. |
-| Rust library regression suite | AUTOMATED_TESTED | `cargo test --workspace --lib`: 32/32 passed in the final local run. |
+| Rust library regression suite | AUTOMATED_TESTED | `cargo test --workspace --lib`: 37/37 passed in the final local run. |
 | Frontend policy regressions | AUTOMATED_TESTED | `npm test`: 6/6 passed. The tests protect visible UI guards; they do not replace Rust policy tests. |
 | Rust formatting and workspace check | AUTOMATED_TESTED | The pinned 1.96 toolchain passed formatting and workspace checking. |
 | Current-tree privacy/sanitation | AUTOMATED_TESTED | `node scripts/public-repo-audit.cjs` passed with 0 confirmed live-secret matches. |
-| Reachable-history privacy audit | KNOWN_LIMITATION | `--history` found one pre-existing author/committer email in commit `189f867a6006`; it found 0 confirmed live-secret matches. History was not rewritten in this certification pass. |
+| Reachable-history privacy audit | AUTOMATED_TESTED | `--history` passed with 0 confirmed live-secret matches and 2 non-secret identity metadata warnings for commit `189f867a6006`; history was not rewritten. |
 | Individual provider-seat feasibility records | LIVE_TESTED | Carried forward from `M0.8-FINDINGS.md` and `CODEX-WSL-FINAL-CERTIFICATION.md`; not a current Tauri three-seat debate. |
-| Current-host authenticated R1/R2/R3 provider debate | NOT_TESTED | The billing/routing guard blocked safe dispatch. No API-key fallback was used. |
+| Current-host subscription routing preflight | AUTOMATED_TESTED | `SUBSCRIPTION ROUTING = SAFE`; ambient host credentials were present but not inherited. Claude, Antigravity, and Codex WSL all reported `preflight=READY`. |
+| Current-host repository-grounded R1/R2/R3 provider debate | SAFETY_BLOCKED | A native Tauri attempt created debate `debate-3794d2e0-6f0e-4390-9ee2-fc9503871826`, built the real repository snapshot, and stopped because one secret-looking exclusion required human review. No provider process launched. |
 | Current-host Tauri human decision and deterministic export | NOT_TESTED | The installed-app test intentionally stopped before provider positions, decision, and export. |
 | NSIS build, install, launch, SQLite creation, debate creation, cancellation, restart, reinstall, and uninstall | INSTALLER_TESTED | See the installer record below. |
 | Provider process cancellation, WSL termination fallback, and interrupted-dispatch recovery | NOT_TESTED | The installed-app cancellation was a persisted debate cancellation, not a live provider-process interruption test. |
-| Billing/routing guard and unavailable-seat behavior | KNOWN_LIMITATION | The product fails closed and exposes the human retry/cancel/degraded controls; safe live provider availability was not established. |
+| Snapshot secret-review gate and unavailable-seat behavior | KNOWN_LIMITATION | The product fails closed and exposes the human retry/cancel/degraded controls; the current repository requires explicit review of a secret-looking exclusion before live provider availability can be established. |
 
 ## Current installed-app runtime record
 
@@ -47,16 +48,19 @@ DATABASE_SHA256_AFTER_CLOSE = C64E111B930815B345AE08F3DB4D5B3237582950792014E071
 
 The application showed all three seats as pending/not ready, displayed the human retry/cancel/degraded controls, and did not dispatch a provider. The cancel action changed the persisted state to `CANCELLED`. A fresh launch and a reinstall launch both found the same persisted debate in SQLite. No raw database, provider output, or credential material is retained in the repository.
 
-The headless provider preflight reported presence/status only:
+The corrected headless provider preflight reported effective routing and presence/status only:
 
 ```text
-BILLING = BLOCKED_ENVIRONMENT_VARIABLE_PRESENT
+SUBSCRIPTION ROUTING = SAFE
+HOST CREDENTIALS = PRESENT BUT NOT INHERITED
 Claude Code = model=claude-haiku-4-5-20251001, certification=Pass, preflight=READY
 Antigravity CLI = model=gemini-3.7-flash-low, certification=PassWithDeclaredLimitation, preflight=READY
 Codex WSL = model=gpt-5.6-luna, certification=PassWithDeclaredLimitation, preflight=READY
 ```
 
-`READY` here is provider preflight status, not proof that a live round was safe to dispatch. The billing guard stopped execution before a provider process was launched.
+`READY` here is effective subscription-routing preflight status, not proof that a live round completed. The repository snapshot secret-review gate stopped the native attempt before a provider process was launched.
+
+The native attempt used the real repository path through the installed Tauri application. The snapshot builder recorded exclusions and sealed the sanitized destination, then the controller failed closed on the required human review. No API-key fallback, custom base URL, billing change, credential change, or provider handoff occurred. The temporary live-test app data was retained outside the repository and the user's original app data was restored.
 
 For this current installed-app record, the controlled evidence hashes are explicitly absent because no provider round ran:
 
@@ -109,8 +113,8 @@ Generated artifact:
 
 ```text
 PATH = target/release/bundle/nsis/Council of Agents_0.1.0_x64-setup.exe
-SIZE = 3,435,685 bytes
-SHA256 = 8AA7AC664F9F990B80D5AA9841E8D8C1DCED1EDED281A5AD61E2A8B2556D743C
+SIZE = 3,433,112 bytes
+SHA256 = 56DFD4F43A85A0DBD0558AAEB870F71F55BC2D2E188E9EA925E5B05C2978F1FE
 ```
 
 The final rebuilt installer was run silently into an isolated temporary directory. It exited `0`, produced `council-desktop.exe` and `uninstall.exe`, launched a native window titled `Council of Agents`, and its uninstaller exited `0` and removed the install directory. The clean app-data install, persisted debate flow, cancellation, restart, and reinstall evidence was exercised against the earlier same-source NSIS build (`5843b1b542e3ca2a60a79036819619f13c451567b845ea40f2dd96d243153782`, 3,434,551 bytes); the final rebuilt artifact was separately install/launch/uninstall verified.
@@ -148,7 +152,7 @@ No live provider call, credential change, billing change, public release, or aut
 
 ## Remaining gates before V1 production certification
 
-1. Establish safe subscription-only availability for the current host without adding an API key.
+1. Complete human review and clearance of the current secret-looking snapshot exclusion without exposing its contents.
 2. Run a current desktop Tauri debate against the real sanitized repository path through R1, R2, and R3.
 3. Verify live packet, schema, snapshot, citation, response, and served-model evidence for every seat.
 4. Exercise the human decision and deterministic export path from those live positions.

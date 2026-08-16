@@ -55,7 +55,7 @@ The provider registry builds commands from typed configuration. React never spaw
 
 ## Billing and credentials
 
-The controller rejects configured API keys, custom provider URLs, and alternate provider routing variables. It does not print their values. Council execution is account-based subscription authentication only.
+The controller builds each provider command from an explicit host-environment allowlist and then clears the child environment before applying that command spec. Ambient host credentials are not inherited by Claude, Antigravity, or Codex WSL. Configured API keys, custom provider URLs, alternate routing variables, and prohibited routing arguments are rejected at settings and command-construction boundaries. It does not print their values. Council execution is account-based subscription authentication only.
 
 ## Failure behavior
 
@@ -76,6 +76,6 @@ Provider output is advisory. Majority is not authority. The human decision is re
 
 The repository contains durable individual-seat evidence for Claude, Antigravity, and Codex WSL, plus implementation and automated checks for the controller boundary. That evidence does not substantiate a current Tauri three-seat debate through R1, R2, R3, human decision, and local export.
 
-The current installed-app certification run created debate `debate-795181f0-43db-42c9-97ff-0af9b14fb9f0`, showed the unavailable-seat recovery/degraded controls, persisted cancellation, and verified restart/reinstall persistence. The safe billing/routing gate prevented provider dispatch, so current-host live positions, citation attachment, decision, export, provider-process cancellation, and interrupted-dispatch recovery remain unverified. The exact gate classifications and hashes are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
+The current installed-app certification run created debate `debate-795181f0-43db-42c9-97ff-0af9b14fb9f0`, showed the unavailable-seat recovery/degraded controls, persisted cancellation, and verified restart/reinstall persistence. A later native repository-grounded attempt created debate `debate-3794d2e0-6f0e-4390-9ee2-fc9503871826`, built and sealed the sanitized snapshot, and stopped at the mandatory secret-review gate before provider dispatch. Current-host live positions, citation attachment, decision, export, provider-process cancellation, and interrupted-dispatch recovery remain unverified. The exact gate classifications and hashes are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
 
 Accordingly, the current product status is `RELEASE_CANDIDATE`, not `PRODUCTION_CERTIFIED`. V1 continues to perform preflight, keep unavailable seats visible, and require an explicit degraded-mode choice before continuing.

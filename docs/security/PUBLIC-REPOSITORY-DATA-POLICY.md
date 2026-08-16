@@ -18,3 +18,5 @@ node scripts/public-repo-audit.cjs --history
 ```
 
 The check is local-only and reports finding categories and repository-relative locations without printing matched values. A potential credential is treated as compromised until removed from the current tree and reachable history; required rotation or revocation happens manually outside the repository.
+
+Ordinary Git author and committer email metadata is reported separately as `IDENTITY_METADATA_WARNINGS`. It is not treated as a secret or a release-blocking content finding when no credential, private path, or other prohibited content is present. The audit still exits nonzero for every prohibited content or credential category, and it never prints the email value.

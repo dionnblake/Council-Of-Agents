@@ -13,6 +13,7 @@ Own the Tauri 2 shell, React command-center UI, and the typed IPC boundary for C
 
 - React must never spawn provider commands directly.
 - The UI must show requested model, served-model status, certification limitations, and runtime state.
+- Provider readiness must reflect effective subscription-routing validation, not unrelated credentials present in the parent desktop environment.
 - No implementation handoff button, automatic coding action, or hidden provider session may be added.
 - Preview/fallback data must be visually and textually distinguishable from persisted runtime state.
 - Keep the interface local-first and usable without a network font or remote asset.

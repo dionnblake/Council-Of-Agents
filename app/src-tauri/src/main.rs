@@ -7,10 +7,9 @@ use council_core::{
     LiveProviderExecutor, ModelSelection, POSITION_SCHEMA_VERSION, ProviderCallRequest,
     ProviderConfig, ProviderKind, ProviderPosition, ProviderRegistry, RoundRequest,
     ServingIdentityStatus, SnapshotBuilder, SnapshotManifest, SnapshotRequest, TurnState,
-    VerifiedEvidence, WslBridgeRequest, billing_environment_status, build_r0_candidate_union,
-    build_wsl_bridge_plan, compile_decision_record, compile_master_prompt, content_hash,
-    deterministic_call_id, ensure_subscription_environment, merge_discovery_proposals, new_id,
-    validate_intake,
+    VerifiedEvidence, WslBridgeRequest, build_r0_candidate_union, build_wsl_bridge_plan,
+    compile_decision_record, compile_master_prompt, content_hash, deterministic_call_id,
+    ensure_subscription_environment, merge_discovery_proposals, new_id, validate_intake,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -247,9 +246,6 @@ fn antigravity_guard_ready(config: &ProviderConfig) -> bool {
 }
 
 fn provider_status(config: &ProviderConfig, registry: &ProviderRegistry) -> ProviderStatus {
-    let blocked_billing_key = billing_environment_status()
-        .into_iter()
-        .find_map(|(key, present)| present.then_some(key));
     let (state, detail) = match config.provider {
         ProviderKind::Claude => {
             let executable = program_available(&config.executable);
@@ -297,8 +293,8 @@ fn provider_status(config: &ProviderConfig, registry: &ProviderRegistry) -> Prov
             }
         }
     };
-    let preflight_detail = registry
-        .preflight(&config.provider)
+    let routing_detail = registry
+        .validate_subscription_routing(&config.provider)
         .err()
         .map(|error| error.to_string());
     let auth = match config.provider {
@@ -311,16 +307,12 @@ fn provider_status(config: &ProviderConfig, registry: &ProviderRegistry) -> Prov
         label: config.provider.display_name().to_string(),
         model: config.model_default.clone(),
         certification: certification_label(config),
-        state: if preflight_detail.is_some() || blocked_billing_key.is_some() {
+        state: if routing_detail.is_some() {
             "NOT_READY".to_string()
         } else {
             state.to_string()
         },
-        detail: if let Some(key) = blocked_billing_key {
-            format!("{key} is present; subscription auth required")
-        } else {
-            preflight_detail.unwrap_or_else(|| detail.to_string())
-        },
+        detail: routing_detail.unwrap_or_else(|| detail.to_string()),
         requested: config.model_default.clone(),
         served: match config.provider {
             ProviderKind::Claude => "VERIFIED_MATCH".to_string(),
@@ -416,6 +408,10 @@ fn validate_provider_settings(configs: &[ProviderConfig]) -> Result<(), String> 
             }
             _ => {}
         }
+    }
+    for config in configs {
+        council_core::providers::validate_subscription_configuration(config)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -1398,7 +1394,7 @@ fn run_discovery_round(
     if let Err(error) = ensure_subscription_environment() {
         let detail = error.to_string();
         database
-            .record_safety_event(Some(&debate_id), "BILLING_SAFETY_BLOCK", &detail)
+            .record_safety_event(Some(&debate_id), "SUBSCRIPTION_ROUTING_BLOCK", &detail)
             .map_err(|db_error| db_error.to_string())?;
         let _ = database.transition_debate(&debate_id, DebateEvent::SafetyAbort);
         return Err(detail);
@@ -1414,13 +1410,13 @@ fn run_discovery_round(
                 .map_err(|error| error.to_string())?;
             return Err(detail);
         }
-        match registry.preflight(&config.provider) {
+        match registry.validate_subscription_routing(&config.provider) {
             Ok(()) => database
                 .record_preflight(
                     Some(&debate_id),
                     config,
                     "PASS",
-                    "Static safety preflight passed",
+                    "Effective subscription routing preflight passed",
                 )
                 .map_err(|error| error.to_string())?,
             Err(error) => {
@@ -2016,7 +2012,7 @@ fn run_round(
     if let Err(error) = ensure_subscription_environment() {
         let detail = error.to_string();
         database
-            .record_safety_event(Some(&debate_id), "BILLING_SAFETY_BLOCK", &detail)
+            .record_safety_event(Some(&debate_id), "SUBSCRIPTION_ROUTING_BLOCK", &detail)
             .map_err(|db_error| db_error.to_string())?;
         let _ = database.transition_debate(&debate_id, DebateEvent::SafetyAbort);
         return Err(detail);
@@ -2036,13 +2032,13 @@ fn run_round(
             let _ = database.transition_debate(&debate_id, DebateEvent::Pause);
             return Err(detail);
         }
-        match registry.preflight(&config.provider) {
+        match registry.validate_subscription_routing(&config.provider) {
             Ok(()) => database
                 .record_preflight(
                     Some(&debate_id),
                     config,
                     "PASS",
-                    "Static safety preflight passed",
+                    "Effective subscription routing preflight passed",
                 )
                 .map_err(|error| error.to_string())?,
             Err(error) => {

@@ -7,11 +7,11 @@ Audited starting commit: `189f867a600633ce80be8b392959af0920b2c5d7`
 
 ```text
 V1_STATUS = RELEASE_CANDIDATE
-DEFINITION_OF_DONE = NOT MET: current-host authenticated three-seat R1/R2/R3 execution, final positions, human decision, deterministic export, and live provider cancellation/recovery remain untested
+DEFINITION_OF_DONE = NOT MET: the current repository-grounded run stopped at the mandatory secret-review gate before provider dispatch; R1/R2/R3 positions, human decision, deterministic export, and live provider cancellation/recovery remain untested
 M1 = NOT_STARTED
 ```
 
-The implementation is present and the local controller, frontend policy, privacy, build, and NSIS installer gates are covered. The evidence is not sufficient to claim production certification because the current safe provider gate blocked authenticated dispatch. No API-key fallback, billing change, credential change, or autonomous coding handoff was used.
+The implementation is present and the local controller, frontend policy, privacy, build, and NSIS installer gates are covered. The effective subscription-routing preflight is safe, but the current repository-grounded native run stopped at the mandatory snapshot secret-review gate before authenticated dispatch. No API-key fallback, billing change, credential change, or autonomous coding handoff was used.
 
 The complete gate record is [docs/evidence/V1-PRODUCTION-CERTIFICATION.md](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
 
@@ -23,9 +23,9 @@ The certification audit started from `189f867a600633ce80be8b392959af0920b2c5d7` 
 
 Individual seat evidence is carried forward from [M0.8-FINDINGS.md](M0.8-FINDINGS.md) and [CODEX-WSL-FINAL-CERTIFICATION.md](CODEX-WSL-FINAL-CERTIFICATION.md): Claude 20/20 with verified model identity; Antigravity 17/20 with one repair and no served-model report; Codex WSL 20/20 with isolation/auth/sandbox/packet/stateless passes and no served-model report.
 
-Those records do not prove a current Tauri debate. The current-host preflight failed closed on the billing/routing guard, so no authenticated current-host R1/R2/R3 provider round ran. The installed app showed the unavailable-seat state and explicit retry/cancel/degraded controls, but no provider position was dispatched.
+Those records do not prove a current Tauri debate. The corrected current-host preflight reported `SUBSCRIPTION ROUTING = SAFE`, with ambient credentials not inherited by provider commands. A native Tauri repository-grounded attempt created debate `debate-3794d2e0-6f0e-4390-9ee2-fc9503871826`, built the sanitized snapshot, then stopped at the mandatory secret-review gate before any provider position was dispatched.
 
-The headless preflight reported `BILLING = BLOCKED_ENVIRONMENT_VARIABLE_PRESENT`; the three provider contracts reported `preflight=READY` with their requested model IDs. That READY status is not live execution evidence, and no provider process was launched after the guard failed.
+The headless preflight reported `SUBSCRIPTION ROUTING = SAFE` and `HOST CREDENTIALS = PRESENT BUT NOT INHERITED`; the three provider contracts reported `preflight=READY` with their requested model IDs. That READY status is not live execution evidence, and no provider process was launched after the snapshot review gate.
 
 ## 3. Repository and policy evidence
 
@@ -56,20 +56,20 @@ No current-app R1/R2/R3 packet, response schema, repository snapshot, citation, 
 | Check | Result | Command |
 |---|---|---|
 | Rust formatting | PASS | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check` |
-| Rust workspace tests | PASS, 32 library tests and 0 doctests | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace` |
+| Rust workspace tests | PASS, 37 library tests and 0 doctests | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace` |
 | Rust workspace check | PASS | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo check --workspace` |
 | Frontend policy regressions | PASS, 6/6 | `Push-Location app; npm test` |
 | Frontend production build | PASS | `Push-Location app; npm run build` |
 | Package-lock install | PASS | `Push-Location app; npm ci` |
 | Current-tree public repository privacy/sanitation | PASS, 0 confirmed live-secret matches | `node scripts/public-repo-audit.cjs` |
-| Reachable-history privacy audit | KNOWN LIMITATION | `--history` finds one pre-existing author/committer email in commit `189f867a6006`; it finds 0 confirmed live-secret matches. History was not rewritten. |
+| Reachable-history privacy audit | PASS WITH WARNING | `--history` passes with 0 confirmed live-secret matches and 2 non-secret identity metadata warnings for commit `189f867a6006`; history was not rewritten. |
 | Global project verifier | VERIFIED | Pinned Rust toolchain; Evidence block reports `VERIFIED`. |
 
 The frontend tests cover human decision rationale, preview non-persistence, failed/incomplete gating, explicit degraded action, recovery visibility, export-before-decision blocking, requested/served limitations, and no autonomous coding handoff. They are source-level contract tests, not a replacement for Rust policy tests or desktop UI smoke testing.
 
 ## 6. CI
 
-`.github/workflows/windows.yml` now runs on Windows for pushes, pull requests, and manual dispatch. It runs Rust formatting, full workspace tests, workspace checking, `npm ci`, frontend policy tests, the frontend build, and the fail-closed reachable-history privacy audit. It contains no live-provider step. The history audit will remain red until the pre-existing commit metadata is remediated; this pass did not rewrite history.
+`.github/workflows/windows.yml` runs on Windows for pushes, pull requests, and manual dispatch. It runs Rust formatting, full workspace tests, workspace checking, `npm ci`, frontend policy tests, the frontend build, and the reachable-history privacy audit. It contains no live-provider step. Ordinary Git identity metadata is reported as a warning; secret, private-path, credential, and token findings remain fatal.
 
 ## 7. NSIS build and artifact hash
 
@@ -85,8 +85,8 @@ Generated installer:
 
 ```text
 target/release/bundle/nsis/Council of Agents_0.1.0_x64-setup.exe
-SIZE = 3,435,685 bytes
-SHA256 = 8AA7AC664F9F990B80D5AA9841E8D8C1DCED1EDED281A5AD61E2A8B2556D743C
+SIZE = 3,433,112 bytes
+SHA256 = 56DFD4F43A85A0DBD0558AAEB870F71F55BC2D2E188E9EA925E5B05C2978F1FE
 ```
 
 ## 8. Install, launch, persistence, reinstall, and uninstall results
@@ -102,17 +102,18 @@ This is installer and local persistence certification. It is not live-provider c
 | Classification | V1 result |
 |---|---|
 | IMPLEMENTED | Controller, persistence, snapshot/packet boundary, provider contracts, Tauri bridge, UI states, human gate, deterministic local export, no-handoff boundary |
-| AUTOMATED_TESTED | Rust library 32/32, frontend 6/6, formatting, workspace check, frontend build, privacy/sanitation audit |
+| AUTOMATED_TESTED | Rust library 37/37, frontend 6/6, formatting, workspace check, frontend build, privacy/sanitation audit |
 | LIVE_TESTED | Individual provider-seat records only, carried forward with declared limitations |
 | INSTALLER_TESTED | NSIS build, clean install/launch/app data/debate/cancel/restart/reinstall/uninstall |
-| KNOWN_LIMITATION | Billing/routing guard prevented safe current-host live provider execution |
-| NOT_TESTED | Current Tauri R1/R2/R3, live positions/citations, human decision/export from live positions, live provider cancellation/recovery, interrupted dispatch, WSL fallback in this product run |
+| KNOWN_LIMITATION | Snapshot secret-review gate requires explicit human review before the current repository can be dispatched |
+| SAFETY_BLOCKED | Current native repository-grounded Tauri attempt stopped before provider launch |
+| NOT_TESTED | Current Tauri R1/R2/R3 positions/citations, human decision/export from live positions, live provider cancellation/recovery, interrupted dispatch, WSL fallback in this product run |
 
 ## 10. Limitations and remaining gates
 
 Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable current-host evidence for:
 
-1. safe subscription-only provider availability without adding an API key;
+1. human review and clearance of the current secret-looking snapshot exclusion without exposing its contents;
 2. a real sanitized repository-grounded Tauri R1/R2/R3 run for all selected seats;
 3. packet, schema, snapshot, citation, response, and served-model evidence;
 4. the human decision and deterministic export path from those live positions;
@@ -131,6 +132,8 @@ Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable
 - `README.md`
 - `app/AGENTS.md`
 - `docs/evidence/AGENTS.md`
+- provider command routing and environment boundary implementation/tests
+- public repository audit severity policy
 - this report
 
 ## 12. Exact commit and closeout

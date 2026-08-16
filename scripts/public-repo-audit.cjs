@@ -23,6 +23,10 @@ const secretKinds = new Set([
   "SECRET_ASSIGNMENT",
   "URL_CREDENTIALS",
 ]);
+const identityMetadataKinds = new Set([
+  "COMMIT_AUTHOR_EMAIL",
+  "COMMIT_COMMITTER_EMAIL",
+]);
 
 const contentChecks = [
   { kind: "MACHINE_HOSTNAME", pattern: /\b(?:DESKTOP|LAPTOP|WIN)-[A-Z0-9]{5,}\b/gi },
@@ -216,12 +220,19 @@ const currentScanned = scanCurrentTree();
 const historyScanned = includeHistory ? scanHistory() : 0;
 const historyState = includeHistory ? "SCANNED" : "SKIPPED";
 const secretFindings = findings.filter((finding) => secretKinds.has(finding.kind));
+const identityMetadataFindings = findings.filter((finding) =>
+  identityMetadataKinds.has(finding.kind),
+);
+const releaseFindings = findings.filter(
+  (finding) => !identityMetadataKinds.has(finding.kind),
+);
 
 console.log(`CURRENT_FILES_SCANNED=${currentScanned}`);
 console.log(`HISTORY_BLOBS_SCANNED=${historyScanned}`);
 console.log(`GIT_HISTORY=${historyState}`);
 console.log(`CONFIRMED_LIVE_SECRET_MATCHES=${secretFindings.length}`);
-console.log(`PUBLIC_REPO_AUDIT=${findings.length === 0 ? "PASS" : "FAIL"}`);
+console.log(`IDENTITY_METADATA_WARNINGS=${identityMetadataFindings.length}`);
+console.log(`PUBLIC_REPO_AUDIT=${releaseFindings.length === 0 ? "PASS" : "FAIL"}`);
 
 for (const finding of findings.sort((left, right) => {
   const a = `${left.scope}|${left.kind}|${left.file}|${left.line || ""}|${left.extra}`;
@@ -230,7 +241,8 @@ for (const finding of findings.sort((left, right) => {
 })) {
   const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
   const suffix = finding.extra ? ` ${finding.extra}` : "";
-  console.log(`${finding.scope} ${finding.kind} ${location}${suffix}`);
+  const severity = identityMetadataKinds.has(finding.kind) ? "WARNING" : "FAIL";
+  console.log(`${severity} ${finding.scope} ${finding.kind} ${location}${suffix}`);
 }
 
-process.exitCode = findings.length === 0 ? 0 : 1;
+process.exitCode = releaseFindings.length === 0 ? 0 : 1;

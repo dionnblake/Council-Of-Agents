@@ -17,7 +17,7 @@ node scripts/public-repo-audit.cjs
 node scripts/public-repo-audit.cjs --history
 ~~~
 
-The full Rust workspace suite passed: 32 library tests, zero doctests, and zero failures. The frontend policy suite passed 6/6 tests. The frontend suite is intentionally dependency-free and protects the visible human-decision, preview, recovery, degraded-mode, limitation, and manual-boundary contracts; Rust remains the policy authority.
+The full Rust workspace suite passed: 37 library tests, zero doctests, and zero failures. The frontend policy suite passed 6/6 tests. The frontend suite is intentionally dependency-free and protects the visible human-decision, preview, recovery, degraded-mode, limitation, and manual-boundary contracts; Rust remains the policy authority.
 
 The native Tauri installer path was tested separately. `npx tauri build --bundles nsis` produced the V1 NSIS artifact; a clean install launched a native `Council of Agents` window, created SQLite app data, opened a persisted debate, recorded cancellation, survived restart, survived reinstall, and uninstalled cleanly. This proves the packaged local shell and persistence path, not authenticated provider execution.
 
@@ -32,6 +32,6 @@ The complete gate record, installer hash, debate identifier, carried-forward sea
 
 ## Unverified here
 
-- A current-host authenticated three-seat provider round was not run because the safe billing/routing guard blocked dispatch; no API-key routing was used.
+- A current-host repository-grounded three-seat provider round was attempted after `SUBSCRIPTION ROUTING = SAFE`, but the sanitized snapshot identified one secret-looking exclusion and stopped for mandatory human review before provider dispatch; no API-key routing was used.
 - Current Tauri R1/R2/R3 positions, live citation attachment, human decision, deterministic export, real repository snapshot/WSL transfer, live provider cancellation, WSL termination fallback, and interrupted-dispatch recovery remain unverified.
-- The global verifier returned `VERIFIED` with the pinned Rust toolchain. The current-tree privacy audit returned `PASS` with 0 confirmed live-secret matches. The reachable-history audit remains `FAIL` only because commit `189f867a6006` carries a pre-existing author/committer email; history was not rewritten in this pass.
+- The global verifier returned `VERIFIED` with the pinned Rust toolchain. Both privacy audits returned `PASS` with 0 confirmed live-secret matches; the history audit reported 2 non-secret identity metadata warnings for commit `189f867a6006`, without rewriting history.
