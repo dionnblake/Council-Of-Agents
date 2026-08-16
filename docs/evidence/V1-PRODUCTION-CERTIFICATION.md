@@ -7,6 +7,24 @@ M1: `NOT_STARTED`
 
 This record separates implementation evidence, automated evidence, current-host installer evidence, and live-provider evidence. It does not treat a synthetic adapter, a carried-forward seat record, or a successful compile as a completed product certification.
 
+## Continuation checkpoint: persisted snapshot review
+
+This continuation started from GitHub `main` at `26f51360ca601d8c9fcf5ca2f6b97fffff150902`. The secret-review dead end is now a persisted `SNAPSHOT_REVIEW_REQUIRED` state. Its review record binds the debate ID, snapshot ID, manifest SHA-256, deterministic exclusion-set hash, safe relative exclusion metadata, source fingerprint captured during snapshot creation, fixed acknowledgment, decision, and review timestamp. Approval cannot restore excluded files or expose matched values. A source change invalidates the prior review and blocks/reopens the gate for the changed sanitized snapshot.
+
+The corrected native candidate reached the gate in a clean installed-app database:
+
+```text
+DEBATE_ID = debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb
+STATE = SNAPSHOT_REVIEW_REQUIRED
+SNAPSHOT_ID = snapshot-debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb
+MANIFEST_SHA256 = f7ae4901c5f14641f00c7fda8f1083b08861a38bcef347088f8d14c6a9bd66af
+EXCLUSION_SET_SHA256 = f3e266280ff7a33d222af4a6032348c4c70b7c607ba859c8dd421403af628bc8
+SECRET_EXCLUSION_COUNT = 3
+PROVIDER_TURNS = 0
+```
+
+The UI displayed only safe relative paths, exclusion reasons, and hashes. It did not display or persist excluded contents, matched substrings, or provider context. Owner approval is still required before any provider process can launch.
+
 ## Verdict
 
 ```text
@@ -20,18 +38,18 @@ M1 = NOT_STARTED
 | Gate | Classification | Evidence and boundary |
 |---|---|---|
 | Rust controller, persistence, provider contracts, snapshot/packet controls, human gate, and manual export boundary | IMPLEMENTED | Repository source and Rust checks; Rust remains policy authority. |
-| Rust library regression suite | AUTOMATED_TESTED | `cargo test --workspace --lib`: 37/37 passed in the final local run. |
-| Frontend policy regressions | AUTOMATED_TESTED | `npm test`: 6/6 passed. The tests protect visible UI guards; they do not replace Rust policy tests. |
+| Rust library regression suite | AUTOMATED_TESTED | `cargo test --workspace`: 42/42 library tests and 0 doctests passed on the pinned toolchain. |
+| Frontend policy regressions | AUTOMATED_TESTED | `npm test`: 7/7 passed. The tests protect visible UI guards; they do not replace Rust policy tests. |
 | Rust formatting and workspace check | AUTOMATED_TESTED | The pinned 1.96 toolchain passed formatting and workspace checking. |
 | Current-tree privacy/sanitation | AUTOMATED_TESTED | `node scripts/public-repo-audit.cjs` passed with 0 confirmed live-secret matches. |
 | Reachable-history privacy audit | AUTOMATED_TESTED | `--history` passed with 0 confirmed live-secret matches and 2 non-secret identity metadata warnings for commit `189f867a6006`; history was not rewritten. |
 | Individual provider-seat feasibility records | LIVE_TESTED | Carried forward from `M0.8-FINDINGS.md` and `CODEX-WSL-FINAL-CERTIFICATION.md`; not a current Tauri three-seat debate. |
 | Current-host subscription routing preflight | AUTOMATED_TESTED | `SUBSCRIPTION ROUTING = SAFE`; ambient host credentials were present but not inherited. Claude, Antigravity, and Codex WSL all reported `preflight=READY`. |
-| Current-host repository-grounded R1/R2/R3 provider debate | SAFETY_BLOCKED | A native Tauri attempt created debate `debate-3794d2e0-6f0e-4390-9ee2-fc9503871826`, built the real repository snapshot, and stopped because one secret-looking exclusion required human review. No provider process launched. |
+| Current-host repository-grounded R1/R2/R3 provider debate | HUMAN_REVIEW_REQUIRED | Corrected native candidate created debate `debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb`, sealed the real repository snapshot, persisted the exact review record, and is waiting for owner approval. No provider process launched. |
 | Current-host Tauri human decision and deterministic export | NOT_TESTED | The installed-app test intentionally stopped before provider positions, decision, and export. |
 | NSIS build, install, launch, SQLite creation, debate creation, cancellation, restart, reinstall, and uninstall | INSTALLER_TESTED | See the installer record below. |
 | Provider process cancellation, WSL termination fallback, and interrupted-dispatch recovery | NOT_TESTED | The installed-app cancellation was a persisted debate cancellation, not a live provider-process interruption test. |
-| Snapshot secret-review gate and unavailable-seat behavior | KNOWN_LIMITATION | The product fails closed and exposes the human retry/cancel/degraded controls; the current repository requires explicit review of a secret-looking exclusion before live provider availability can be established. |
+| Snapshot secret-review gate and unavailable-seat behavior | IMPLEMENTED / HUMAN_REVIEW_REQUIRED | The product fails closed, persists the review-required state across restart, exposes exact safe metadata, supports approve/reject semantics, and invalidates approval on source changes. The current repository still requires explicit owner review before live provider availability can be established. |
 
 ## Current installed-app runtime record
 
@@ -113,8 +131,8 @@ Generated artifact:
 
 ```text
 PATH = target/release/bundle/nsis/Council of Agents_0.1.0_x64-setup.exe
-SIZE = 3,433,112 bytes
-SHA256 = 56DFD4F43A85A0DBD0558AAEB870F71F55BC2D2E188E9EA925E5B05C2978F1FE
+SIZE = 3,465,281 bytes
+SHA256 = 60CB7FCBBB228DF25502513436CB1F259DC96B2618DE29CA45224C522A30046D
 ```
 
 The final rebuilt installer was run silently into an isolated temporary directory. It exited `0`, produced `council-desktop.exe` and `uninstall.exe`, launched a native window titled `Council of Agents`, and its uninstaller exited `0` and removed the install directory. The clean app-data install, persisted debate flow, cancellation, restart, and reinstall evidence was exercised against the earlier same-source NSIS build (`5843b1b542e3ca2a60a79036819619f13c451567b845ea40f2dd96d243153782`, 3,434,551 bytes); the final rebuilt artifact was separately install/launch/uninstall verified.

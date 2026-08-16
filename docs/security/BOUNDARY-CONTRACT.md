@@ -28,7 +28,8 @@ The Council does not edit a repository, create branches, commit, push, deploy, o
 - Symlinks and Windows reparse points are rejected.
 - The manifest records file size and SHA-256.
 - The snapshot is sealed read-only; Windows ACLs are applied through the native security API, not icacls.
-- The desktop run_round path creates or reloads a Council-owned sanitized snapshot before repository-grounded dispatch. A missing snapshot, secret review gate, hash mismatch, or bridge failure stops the round; there is no direct-repository fallback.
+- The desktop run_round path creates or reloads a Council-owned sanitized snapshot before repository-grounded dispatch. A missing snapshot, hash mismatch, or bridge failure stops the round; there is no direct-repository fallback.
+- A secret-looking exclusion creates a persisted `SNAPSHOT_REVIEW_REQUIRED` state. The review record binds the exact snapshot ID, manifest hash, deterministic exclusion-set hash, safe relative paths/reasons, and source fingerprint captured during snapshot creation. Approval keeps excluded files absent, stores only a fixed safe acknowledgment, and becomes invalid when relevant source contents change. Rejection transitions to `SAFETY_ABORT`.
 
 ## Packet boundary
 
@@ -76,6 +77,6 @@ Provider output is advisory. Majority is not authority. The human decision is re
 
 The repository contains durable individual-seat evidence for Claude, Antigravity, and Codex WSL, plus implementation and automated checks for the controller boundary. That evidence does not substantiate a current Tauri three-seat debate through R1, R2, R3, human decision, and local export.
 
-The current installed-app certification run created debate `debate-795181f0-43db-42c9-97ff-0af9b14fb9f0`, showed the unavailable-seat recovery/degraded controls, persisted cancellation, and verified restart/reinstall persistence. A later native repository-grounded attempt created debate `debate-3794d2e0-6f0e-4390-9ee2-fc9503871826`, built and sealed the sanitized snapshot, and stopped at the mandatory secret-review gate before provider dispatch. Current-host live positions, citation attachment, decision, export, provider-process cancellation, and interrupted-dispatch recovery remain unverified. The exact gate classifications and hashes are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
+The current installed-app certification run created debate `debate-795181f0-43db-42c9-97ff-0af9b14fb9f0`, showed the unavailable-seat recovery/degraded controls, persisted cancellation, and verified restart/reinstall persistence. The corrected native repository-grounded candidate created debate `debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb`, persisted the exact review gate for snapshot `snapshot-debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb`, and is waiting for owner approval before provider dispatch. Current-host live positions, citation attachment, decision, export, provider-process cancellation, and interrupted-dispatch recovery remain unverified. The exact gate classifications and hashes are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
 
 Accordingly, the current product status is `RELEASE_CANDIDATE`, not `PRODUCTION_CERTIFIED`. V1 continues to perform preflight, keep unavailable seats visible, and require an explicit degraded-mode choice before continuing.

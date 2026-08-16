@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +44,36 @@ pub struct SnapshotManifest {
     pub manifest_sha256: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SnapshotReviewDecision {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotReviewExclusion {
+    pub relative_path: String,
+    pub reason: SnapshotExclusionReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotReviewRecord {
+    pub id: String,
+    pub debate_id: String,
+    pub snapshot_id: String,
+    pub manifest_hash: String,
+    pub exclusion_set_hash: String,
+    pub source_tree_hash: String,
+    pub secret_exclusion_count: u32,
+    pub exclusions: Vec<SnapshotReviewExclusion>,
+    pub decision: SnapshotReviewDecision,
+    pub rationale: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub reviewed_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SnapshotRequest {
     pub source_root: PathBuf,
@@ -68,6 +98,8 @@ pub enum SnapshotError {
     DestinationExists(PathBuf),
     #[error("native ACL sealing failed at {path} with Windows error {code}")]
     Acl { path: PathBuf, code: u32 },
+    #[error("snapshot integrity check failed: {0}")]
+    Integrity(String),
 }
 
 #[derive(Debug, Default)]
@@ -166,7 +198,7 @@ impl SnapshotBuilder {
         manifest
             .exclusions
             .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-        manifest.manifest_sha256 = manifest_hash(&manifest)?;
+        manifest.manifest_sha256 = snapshot_manifest_hash(&manifest)?;
         let manifest_path = destination_canonical.join("snapshot-manifest.json");
         let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
         fs::write(&manifest_path, manifest_bytes).map_err(|source| SnapshotError::Filesystem {
@@ -175,6 +207,109 @@ impl SnapshotBuilder {
         })?;
         seal_tree(&destination_canonical)?;
         Ok(manifest)
+    }
+
+    pub fn source_tree_hash(&self, source_root: &Path) -> Result<String, SnapshotError> {
+        let source = fs::canonicalize(source_root).map_err(|source| SnapshotError::Filesystem {
+            path: source_root.to_path_buf(),
+            source,
+        })?;
+        if !source.is_dir() {
+            return Err(SnapshotError::MissingSource(source));
+        }
+        let ignored_patterns = self.load_gitignore(&source);
+        let mut records = Vec::new();
+        self.fingerprint_directory(&source, &source, &ignored_patterns, &mut records)?;
+        records.sort();
+        Ok(sha256(records.join("\n").as_bytes()))
+    }
+
+    fn fingerprint_directory(
+        &self,
+        source_root: &Path,
+        current_source: &Path,
+        ignored_patterns: &[String],
+        records: &mut Vec<String>,
+    ) -> Result<(), SnapshotError> {
+        let mut entries = fs::read_dir(current_source)
+            .map_err(|source| SnapshotError::Filesystem {
+                path: current_source.to_path_buf(),
+                source,
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|source| SnapshotError::Filesystem {
+                path: current_source.to_path_buf(),
+                source,
+            })?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
+            let source_path = entry.path();
+            let relative = source_path
+                .strip_prefix(source_root)
+                .expect("source path remains beneath source root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            let name = entry.file_name().to_string_lossy().to_string();
+            let metadata =
+                fs::symlink_metadata(&source_path).map_err(|source| SnapshotError::Filesystem {
+                    path: source_path.clone(),
+                    source,
+                })?;
+
+            if metadata.file_type().is_symlink() {
+                records.push(format!("EXCLUDED|{relative}|SYMLINK"));
+                continue;
+            }
+            if has_reparse_point(&metadata) {
+                records.push(format!("EXCLUDED|{relative}|REPARSE_POINT"));
+                continue;
+            }
+            if self.excluded_names.contains(&name) {
+                records.push(format!(
+                    "EXCLUDED|{relative}|{}",
+                    if name == ".git" {
+                        "GIT_METADATA"
+                    } else {
+                        "AGENT_CONFIG"
+                    }
+                ));
+                continue;
+            }
+            if ignored_patterns
+                .iter()
+                .any(|pattern| ignored(pattern, &relative, metadata.is_dir()))
+            {
+                records.push(format!("EXCLUDED|{relative}|GIT_IGNORED"));
+                continue;
+            }
+            if metadata.is_dir() {
+                records.push(format!("DIRECTORY|{relative}"));
+                self.fingerprint_directory(source_root, &source_path, ignored_patterns, records)?;
+                continue;
+            }
+            if !metadata.is_file() {
+                records.push(format!("EXCLUDED|{relative}|UNSUPPORTED"));
+                continue;
+            }
+            let bytes = fs::read(&source_path).map_err(|source| SnapshotError::Filesystem {
+                path: source_path.clone(),
+                source,
+            })?;
+            let kind = if is_secret_filename(&name)
+                || contains_secret(&source_path, &self.secret_regexes)
+            {
+                "SECRET"
+            } else {
+                "FILE"
+            };
+            records.push(format!(
+                "{kind}|{relative}|{}|{}",
+                bytes.len(),
+                sha256(&bytes)
+            ));
+        }
+        Ok(())
     }
 
     fn copy_directory(
@@ -316,10 +451,172 @@ impl SnapshotBuilder {
     }
 }
 
-fn manifest_hash(manifest: &SnapshotManifest) -> Result<String, serde_json::Error> {
+pub fn snapshot_manifest_hash(manifest: &SnapshotManifest) -> Result<String, serde_json::Error> {
     let mut clone = manifest.clone();
     clone.manifest_sha256.clear();
     Ok(sha256(&serde_json::to_vec(&clone)?))
+}
+
+pub fn snapshot_exclusion_review_identity(
+    manifest: &SnapshotManifest,
+) -> (String, Vec<SnapshotReviewExclusion>) {
+    let mut exclusions = manifest
+        .exclusions
+        .iter()
+        .map(|exclusion| SnapshotReviewExclusion {
+            relative_path: exclusion.relative_path.clone(),
+            reason: exclusion.reason.clone(),
+        })
+        .collect::<Vec<_>>();
+    exclusions.sort_by(|left, right| {
+        left.relative_path.cmp(&right.relative_path).then_with(|| {
+            serde_json::to_string(&left.reason)
+                .unwrap_or_default()
+                .cmp(&serde_json::to_string(&right.reason).unwrap_or_default())
+        })
+    });
+    let serialized = serde_json::to_vec(&exclusions).expect("snapshot exclusions serialize");
+    (sha256(&serialized), exclusions)
+}
+
+pub fn snapshot_review_id(
+    debate_id: &str,
+    snapshot_id: &str,
+    manifest_hash: &str,
+    exclusion_set_hash: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(debate_id.as_bytes());
+    digest.update([0]);
+    digest.update(snapshot_id.as_bytes());
+    digest.update([0]);
+    digest.update(manifest_hash.as_bytes());
+    digest.update([0]);
+    digest.update(exclusion_set_hash.as_bytes());
+    format!("snapshot-review-{}", hex::encode(digest.finalize()))
+}
+
+pub fn verify_sealed_snapshot(
+    root: &Path,
+    manifest: &SnapshotManifest,
+) -> Result<(), SnapshotError> {
+    if !root.is_dir() {
+        return Err(SnapshotError::Integrity(format!(
+            "snapshot root is not a directory: {}",
+            root.display()
+        )));
+    }
+    let expected_manifest_hash = snapshot_manifest_hash(manifest)?;
+    if expected_manifest_hash != manifest.manifest_sha256 {
+        return Err(SnapshotError::Integrity(
+            "persisted manifest hash does not match its contents".to_string(),
+        ));
+    }
+    let manifest_path = root.join("snapshot-manifest.json");
+    let on_disk_manifest =
+        fs::read(&manifest_path).map_err(|source| SnapshotError::Filesystem {
+            path: manifest_path.clone(),
+            source,
+        })?;
+    let parsed: SnapshotManifest = serde_json::from_slice(&on_disk_manifest)?;
+    if parsed != *manifest {
+        return Err(SnapshotError::Integrity(
+            "on-disk manifest differs from the persisted review manifest".to_string(),
+        ));
+    }
+
+    let expected_files = manifest
+        .files
+        .iter()
+        .map(|file| file.relative_path.clone())
+        .collect::<BTreeSet<_>>();
+    let mut actual_files = BTreeSet::new();
+    collect_files(root, root, &mut actual_files)?;
+    actual_files.remove("snapshot-manifest.json");
+    if actual_files != expected_files {
+        return Err(SnapshotError::Integrity(
+            "snapshot contains an unexpected or missing file".to_string(),
+        ));
+    }
+
+    for file in &manifest.files {
+        let path = safe_snapshot_path(root, &file.relative_path)?;
+        let bytes = fs::read(&path).map_err(|source| SnapshotError::Filesystem {
+            path: path.clone(),
+            source,
+        })?;
+        if bytes.len() as u64 != file.size || sha256(&bytes) != file.sha256 {
+            return Err(SnapshotError::Integrity(format!(
+                "snapshot file hash mismatch at {}",
+                file.relative_path
+            )));
+        }
+    }
+    for exclusion in &manifest.exclusions {
+        let path = safe_snapshot_path(root, &exclusion.relative_path)?;
+        if path.exists() {
+            return Err(SnapshotError::Integrity(format!(
+                "excluded path is present in the snapshot: {}",
+                exclusion.relative_path
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn collect_files(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<(), SnapshotError> {
+    let entries = fs::read_dir(current).map_err(|source| SnapshotError::Filesystem {
+        path: current.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| SnapshotError::Filesystem {
+            path: current.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|source| SnapshotError::Filesystem {
+            path: path.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() || has_reparse_point(&metadata) {
+            return Err(SnapshotError::Integrity(
+                "sealed snapshot contains a link or reparse point".to_string(),
+            ));
+        }
+        if metadata.is_dir() {
+            collect_files(root, &path, files)?;
+        } else if metadata.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| SnapshotError::Integrity("snapshot path escaped root".to_string()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.insert(relative);
+        }
+    }
+    Ok(())
+}
+
+fn safe_snapshot_path(root: &Path, relative: &str) -> Result<PathBuf, SnapshotError> {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(SnapshotError::Integrity(
+            "snapshot manifest contains an unsafe relative path".to_string(),
+        ));
+    }
+    Ok(root.join(relative_path))
 }
 
 fn is_secret_filename(name: &str) -> bool {
@@ -634,5 +931,46 @@ mod tests {
                 .iter()
                 .any(|item| item.reason == SnapshotExclusionReason::GitIgnored)
         );
+    }
+
+    #[test]
+    fn review_identity_is_safe_and_source_changes_produce_a_new_fingerprint() {
+        let source = tempfile::Builder::new()
+            .prefix("council-review-source-")
+            .tempdir()
+            .unwrap();
+        let destination = tempfile::Builder::new()
+            .prefix("council-review-destination-")
+            .tempdir()
+            .unwrap();
+        fs::write(source.path().join("README.md"), b"reviewable evidence").unwrap();
+        fs::write(
+            source.path().join(".env"),
+            b"TOKEN=review-secret-value-1234567890",
+        )
+        .unwrap();
+
+        let builder = SnapshotBuilder::new();
+        let before = builder.source_tree_hash(source.path()).unwrap();
+        let manifest = builder
+            .build(&SnapshotRequest {
+                source_root: source.path().to_path_buf(),
+                destination_root: destination.path().to_path_buf(),
+                snapshot_id: "reviewed".to_string(),
+            })
+            .unwrap();
+        let (exclusion_hash, exclusions) = snapshot_exclusion_review_identity(&manifest);
+        let serialized = serde_json::to_string(&exclusions).unwrap();
+        assert!(!serialized.contains("review-secret-value"));
+        assert!(!exclusion_hash.is_empty());
+        verify_sealed_snapshot(&destination.path().join("reviewed"), &manifest).unwrap();
+
+        fs::write(
+            source.path().join(".env"),
+            b"TOKEN=changed-review-secret-value-1234567890",
+        )
+        .unwrap();
+        let after = builder.source_tree_hash(source.path()).unwrap();
+        assert_ne!(before, after);
     }
 }

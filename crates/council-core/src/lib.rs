@@ -39,7 +39,11 @@ pub use providers::{
     ensure_subscription_environment,
 };
 pub use runner::{ProcessResult, ProcessRunner};
-pub use snapshot::{SnapshotBuilder, SnapshotManifest, SnapshotRequest};
+pub use snapshot::{
+    SnapshotBuilder, SnapshotManifest, SnapshotRequest, SnapshotReviewDecision,
+    SnapshotReviewExclusion, SnapshotReviewRecord, snapshot_exclusion_review_identity,
+    snapshot_manifest_hash, snapshot_review_id, verify_sealed_snapshot,
+};
 pub use state::{DebateEvent, DebateStateMachine};
 pub use validation::{PositionValidation, validate_intake, validate_position_value};
 

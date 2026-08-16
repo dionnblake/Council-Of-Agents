@@ -17,7 +17,7 @@ node scripts/public-repo-audit.cjs
 node scripts/public-repo-audit.cjs --history
 ~~~
 
-The full Rust workspace suite passed: 37 library tests, zero doctests, and zero failures. The frontend policy suite passed 6/6 tests. The frontend suite is intentionally dependency-free and protects the visible human-decision, preview, recovery, degraded-mode, limitation, and manual-boundary contracts; Rust remains the policy authority.
+The full Rust workspace suite passed: 42 library tests, zero doctests, and zero failures. The frontend policy suite passed 7/7 tests. The frontend suite is intentionally dependency-free and protects the visible human-decision, preview, recovery, degraded-mode, limitation, snapshot-review, and manual-boundary contracts; Rust remains the policy authority.
 
 The native Tauri installer path was tested separately. `npx tauri build --bundles nsis` produced the V1 NSIS artifact; a clean install launched a native `Council of Agents` window, created SQLite app data, opened a persisted debate, recorded cancellation, survived restart, survived reinstall, and uninstalled cleanly. This proves the packaged local shell and persistence path, not authenticated provider execution.
 
@@ -29,6 +29,10 @@ The complete gate record, installer hash, debate identifier, carried-forward sea
 - [CODEX-WSL-FINAL-CERTIFICATION.md](../../CODEX-WSL-FINAL-CERTIFICATION.md) is the dedicated Codex WSL seat evidence.
 - [CODEX-WSL-CERTIFICATION.md](../../CODEX-WSL-CERTIFICATION.md) is the preceding recovery record.
 - The carried-forward records prove individual seat controls only. They do not prove a current Tauri three-seat R1/R2/R3 debate.
+
+## Current review gate and unverified work
+
+The corrected native candidate created debate `debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb` and persisted `SNAPSHOT_REVIEW_REQUIRED` for snapshot `snapshot-debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb` with manifest hash `f7ae4901c5f14641f00c7fda8f1083b08861a38bcef347088f8d14c6a9bd66af` and exclusion-set hash `f3e266280ff7a33d222af4a6032348c4c70b7c607ba859c8dd421403af628bc8`. No provider process or turn has launched. Owner approval is required before live-provider evidence can begin.
 
 ## Unverified here
 

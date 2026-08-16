@@ -15,6 +15,7 @@ Own the Rust workspace packages for Council of Agents.
 - Windows Job Object containment remains enabled for native provider processes. The Codex WSL command uses the explicit WSL boundary controls instead because this host's `wsl.exe` RPC fails for any Job Object assignment; its dedicated distribution termination remains the timeout fallback.
 - No provider adapter may implement autonomous coding, repository mutation, handoff, or external publishing.
 - Snapshot and packet bytes must remain inspectable and hashable.
+- A secret-looking snapshot exclusion enters the persisted `SNAPSHOT_REVIEW_REQUIRED` state. Review records bind the debate to the snapshot ID, manifest hash, exclusion-set hash, sanitized metadata, and source fingerprint; approval is explicit and stale source contents invalidate it.
 - Repair policies and certification limitations are explicit data, not inferred from success.
 - Changes to persisted schema require a migration-safe initialization path and tests.
 

@@ -138,6 +138,7 @@ pub enum DebateState {
     Draft,
     Preflight,
     Snapshotting,
+    SnapshotReviewRequired,
     Ready,
     Opening,
     CrossExamination,

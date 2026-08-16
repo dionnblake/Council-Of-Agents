@@ -15,6 +15,24 @@ The implementation is present and the local controller, frontend policy, privacy
 
 The complete gate record is [docs/evidence/V1-PRODUCTION-CERTIFICATION.md](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
 
+## Continuation checkpoint: persisted snapshot review
+
+This continuation started from GitHub `main` at `26f51360ca601d8c9fcf5ca2f6b97fffff150902`. The dead-end secret-review behavior is now replaced by a persisted `SNAPSHOT_REVIEW_REQUIRED` state and review record. The record binds the debate ID, snapshot ID, manifest SHA-256, deterministic exclusion-set hash, safe relative exclusion metadata, source-tree fingerprint captured at snapshot build time, decision, fixed acknowledgment, and review timestamp. Approval is immutable, does not restore excluded files, and is invalidated when the relevant repository fingerprint changes. The IPC and React surface never returns excluded contents or matched values.
+
+Automated coverage after the change is 42/42 Rust workspace tests and 7/7 frontend policy tests. The corrected native NSIS candidate is installed in the isolated test directory and the clean repository-grounded debate below is waiting for owner approval at the review gate. No provider turn or provider process has launched.
+
+```text
+DEBATE_ID = debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb
+STATE = SNAPSHOT_REVIEW_REQUIRED
+SNAPSHOT_ID = snapshot-debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb
+MANIFEST_SHA256 = f7ae4901c5f14641f00c7fda8f1083b08861a38bcef347088f8d14c6a9bd66af
+EXCLUSION_SET_SHA256 = f3e266280ff7a33d222af4a6032348c4c70b7c607ba859c8dd421403af628bc8
+SECRET_EXCLUSION_COUNT = 3
+PROVIDER_TURNS = 0
+```
+
+The three secret-scanner paths shown to the owner are relative paths only: `M0-RAW-RESULTS.md`, `crates/council-core/src/persistence.rs`, and `crates/council-core/src/snapshot.rs`. Their contents were not displayed or persisted in the review record. Provider dispatch remains paused pending that explicit human action.
+
 ## 1. Current commit and scope
 
 The certification audit started from `189f867a600633ce80be8b392959af0920b2c5d7` on `main`. This pass finished V1 certification work only. It did not start M1, redesign the architecture, or add product features.
@@ -56,9 +74,9 @@ No current-app R1/R2/R3 packet, response schema, repository snapshot, citation, 
 | Check | Result | Command |
 |---|---|---|
 | Rust formatting | PASS | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check` |
-| Rust workspace tests | PASS, 37 library tests and 0 doctests | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace` |
+| Rust workspace tests | PASS, 42 library tests and 0 doctests | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace` |
 | Rust workspace check | PASS | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo check --workspace` |
-| Frontend policy regressions | PASS, 6/6 | `Push-Location app; npm test` |
+| Frontend policy regressions | PASS, 7/7 | `Push-Location app; npm test` |
 | Frontend production build | PASS | `Push-Location app; npm run build` |
 | Package-lock install | PASS | `Push-Location app; npm ci` |
 | Current-tree public repository privacy/sanitation | PASS, 0 confirmed live-secret matches | `node scripts/public-repo-audit.cjs` |
@@ -85,8 +103,8 @@ Generated installer:
 
 ```text
 target/release/bundle/nsis/Council of Agents_0.1.0_x64-setup.exe
-SIZE = 3,433,112 bytes
-SHA256 = 56DFD4F43A85A0DBD0558AAEB870F71F55BC2D2E188E9EA925E5B05C2978F1FE
+SIZE = 3,465,281 bytes
+SHA256 = 60CB7FCBBB228DF25502513436CB1F259DC96B2618DE29CA45224C522A30046D
 ```
 
 ## 8. Install, launch, persistence, reinstall, and uninstall results
@@ -102,10 +120,10 @@ This is installer and local persistence certification. It is not live-provider c
 | Classification | V1 result |
 |---|---|
 | IMPLEMENTED | Controller, persistence, snapshot/packet boundary, provider contracts, Tauri bridge, UI states, human gate, deterministic local export, no-handoff boundary |
-| AUTOMATED_TESTED | Rust library 37/37, frontend 6/6, formatting, workspace check, frontend build, privacy/sanitation audit |
+| AUTOMATED_TESTED | Rust library 42/42, frontend 7/7, formatting, workspace check, frontend build, privacy/sanitation audit |
 | LIVE_TESTED | Individual provider-seat records only, carried forward with declared limitations |
 | INSTALLER_TESTED | NSIS build, clean install/launch/app data/debate/cancel/restart/reinstall/uninstall |
-| KNOWN_LIMITATION | Snapshot secret-review gate requires explicit human review before the current repository can be dispatched |
+| KNOWN_LIMITATION | Snapshot secret-review gate requires explicit owner approval before the current repository can be dispatched; the corrected UI now persists and restores that gate |
 | SAFETY_BLOCKED | Current native repository-grounded Tauri attempt stopped before provider launch |
 | NOT_TESTED | Current Tauri R1/R2/R3 positions/citations, human decision/export from live positions, live provider cancellation/recovery, interrupted dispatch, WSL fallback in this product run |
 
@@ -113,7 +131,7 @@ This is installer and local persistence certification. It is not live-provider c
 
 Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable current-host evidence for:
 
-1. human review and clearance of the current secret-looking snapshot exclusion without exposing its contents;
+1. owner human review and clearance of the current secret-looking snapshot exclusion without exposing its contents;
 2. a real sanitized repository-grounded Tauri R1/R2/R3 run for all selected seats;
 3. packet, schema, snapshot, citation, response, and served-model evidence;
 4. the human decision and deterministic export path from those live positions;
@@ -138,6 +156,6 @@ Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable
 
 ## 12. Exact commit and closeout
 
-The exact audited starting commit is `189f867a600633ce80be8b392959af0920b2c5d7`. The implementation and certification closeout commit is `23bffed2b39645437ac24898d6792f9fe1b5ccd6`. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`. The final documentation-pointer commit is reported separately after push.
+The exact audited starting commit for the earlier report is `189f867a600633ce80be8b392959af0920b2c5d7`. This continuation started from `26f51360ca601d8c9fcf5ca2f6b97fffff150902`; the continuation implementation commit is pending the required owner review and final certification gates. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`.
 
 No M1 work was started.

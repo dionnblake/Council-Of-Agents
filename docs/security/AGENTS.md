@@ -13,6 +13,7 @@ Own durable security contracts and threat boundaries for Council of Agents.
 
 - Describe controls and verification states without storing credentials or authenticated raw output.
 - Keep failed, blocked, and unverified controls visible.
+- Snapshot review records may persist only safe exclusion metadata and hashes. They must bind the exact sanitized snapshot and source fingerprint, invalidate on relevant repository changes, and never persist or display excluded values.
 - Do not weaken the no-autonomous-implementation boundary.
 
 ## Verification

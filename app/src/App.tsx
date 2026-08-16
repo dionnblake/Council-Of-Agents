@@ -122,6 +122,22 @@ type ExportSummary = {
   decision_record_hash: string;
 };
 
+type SnapshotReviewExclusion = {
+  relative_path: string;
+  reason: string;
+};
+
+type SnapshotReviewStatus = {
+  debate_id: string;
+  snapshot_id: string;
+  manifest_hash: string;
+  exclusion_set_hash: string;
+  secret_exclusion_count: number;
+  exclusions: SnapshotReviewExclusion[];
+  decision: "PENDING" | "APPROVED" | "REJECTED";
+  reviewed_at: string | null;
+};
+
 const fallbackProviders: ProviderStatus[] = [
   {
     provider: "CLAUDE",
@@ -194,6 +210,8 @@ function App() {
   const [modifiedDecision, setModifiedDecision] = useState("");
   const [degradedRationale, setDegradedRationale] = useState("");
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
+  const [snapshotReview, setSnapshotReview] = useState<SnapshotReviewStatus | null>(null);
+  const [reviewResumeRound, setReviewResumeRound] = useState<number | null>(null);
   const [question, setQuestion] = useState("");
   const [mode, setMode] = useState("DISCOVERY");
   const [independentOnly, setIndependentOnly] = useState(false);
@@ -267,6 +285,7 @@ function App() {
           setDebate(result[0]);
           void refreshPositions(result[0].id);
           void refreshDiscovery(result[0].id);
+          void refreshSnapshotReview(result[0].id).then(() => refreshDebateSummary(result[0].id));
         }
       })
       .catch(() => undefined);
@@ -305,12 +324,42 @@ function App() {
     }
   }
 
+  async function refreshSnapshotReview(debateId: string) {
+    if (debateId === "preview-debate") {
+      setSnapshotReview(null);
+      return null;
+    }
+    try {
+      const result = await invoke<SnapshotReviewStatus | null>("snapshot_review_status", { debateId });
+      setSnapshotReview(result);
+      return result;
+    } catch {
+      setSnapshotReview(null);
+      return null;
+    }
+  }
+
+  async function refreshDebateSummary(debateId: string) {
+    try {
+      const result = await invoke<DebateSummary[]>("recent_debates");
+      setRecentDebates(result);
+      const latest = result.find((item) => item.id === debateId);
+      if (latest) setDebate(latest);
+      return latest ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async function openDebate(item: DebateSummary) {
     setDebate(item);
     setScreen("debate");
     setRunSummary(null);
+    setReviewResumeRound(null);
     await refreshPositions(item.id);
     await refreshDiscovery(item.id);
+    await refreshSnapshotReview(item.id);
+    await refreshDebateSummary(item.id);
   }
 
   const readyCount = useMemo(() => providers.filter((provider) => provider.state === "READY").length, [providers]);
@@ -319,12 +368,12 @@ function App() {
     if (!debate) return null;
     if (debate.state === "DRAFT") return debate.discovery_required && !debate.discovery_complete ? 0 : 1;
     if (debate.state === "READY" && debate.discovery_required && !debate.discovery_complete) return 0;
-    if (debate.state === "READY") return runSummary?.round ?? 1;
+    if (debate.state === "READY") return reviewResumeRound ?? runSummary?.round ?? 1;
     if (debate.state === "CROSS_EXAMINATION") return runSummary?.round === 4 ? 5 : 2;
     if (debate.state === "FINAL_POSITIONS") return runSummary?.round === 4 ? 5 : 3;
     if (debate.state === "AWAITING_HUMAN_DECISION" && !debate.independent_only) return 4;
     return null;
-  }, [debate, runSummary]);
+  }, [debate, runSummary, reviewResumeRound]);
 
   async function startDebate() {
     if (question.trim().length < 12) {
@@ -352,6 +401,7 @@ function App() {
       setDebate(created);
       setRecentDebates((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setDiscovery(null);
+      setSnapshotReview(null);
       setNotice("Debate created. Provider turns remain human-visible and auditable.");
     } catch {
       setDebate({ id: "preview-debate", state: "DRAFT", question: intake.question, council_size: enabledProviders.length, providers: enabledProviders, degraded: enabledProviders.length < 3, independent_only: independentOnly, discovery_required: decisionType === "STACK" && mode === "DISCOVERY" && intake.options.length === 0, discovery_complete: false, created_at: new Date().toISOString() });
@@ -373,6 +423,7 @@ function App() {
         retryToken: retry ? crypto.randomUUID() : null,
       });
       setRunSummary(result);
+      setReviewResumeRound(null);
       await refreshPositions(debate.id);
       await refreshDiscovery(debate.id);
       setDebate((current) => current ? { ...current, state: result.state, discovery_complete: round === 0 ? result.valid_positions > 0 && result.state === "READY" : current.discovery_complete } : current);
@@ -381,7 +432,41 @@ function App() {
         setScreen("decision");
       }
     } catch (error) {
-      setNotice("Round " + round + " did not dispatch: " + String(error));
+      const review = await refreshSnapshotReview(debate.id);
+      await refreshDebateSummary(debate.id);
+      if (review?.decision === "PENDING") setReviewResumeRound(round);
+      setNotice(review?.decision === "PENDING"
+        ? "Provider dispatch paused. Review the exact sanitized snapshot before continuing."
+        : "Round " + round + " did not dispatch: " + String(error));
+    }
+  }
+
+  async function decideSnapshotReview(decision: "approve" | "reject") {
+    if (!debate || !snapshotReview || snapshotReview.decision !== "PENDING") {
+      setNotice("No pending snapshot review is available.");
+      return;
+    }
+    const command = decision === "approve" ? "approve_snapshot_review" : "reject_snapshot_review";
+    try {
+      const result = await invoke<SnapshotReviewStatus>(command, {
+        input: {
+          debateId: snapshotReview.debate_id,
+          snapshotId: snapshotReview.snapshot_id,
+          manifestHash: snapshotReview.manifest_hash,
+          exclusionSetHash: snapshotReview.exclusion_set_hash,
+        },
+      });
+      setSnapshotReview(result);
+      setDebate((current) => current ? { ...current, state: result.decision === "APPROVED" ? "READY" : "SAFETY_ABORT" } : current);
+      setNotice(result.decision === "APPROVED"
+        ? "Snapshot approved. Dispatch remains a separate human-visible action."
+        : "Snapshot rejected. Provider dispatch is blocked for this debate.");
+    } catch (error) {
+      const refreshed = await refreshSnapshotReview(debate.id);
+      await refreshDebateSummary(debate.id);
+      setNotice(refreshed?.decision === "PENDING"
+        ? "The snapshot changed or could not be verified. Review the refreshed evidence before deciding."
+        : "Snapshot review was not recorded: " + String(error));
     }
   }
 
@@ -521,7 +606,7 @@ function App() {
         <div className="content-scroll">
           {screen === "home" && <HomeScreen providers={providers} setScreen={setScreen} debate={debate} recentDebates={recentDebates} openDebate={openDebate} />}
           {screen === "new" && <LiveNewDebateScreen question={question} setQuestion={setQuestion} mode={mode} setMode={setMode} independentOnly={independentOnly} setIndependentOnly={setIndependentOnly} productType={productType} setProductType={setProductType} decisionType={decisionType} setDecisionType={setDecisionType} priority={priority} setPriority={setPriority} constraints={constraints} setConstraints={setConstraints} optionA={optionA} setOptionA={setOptionA} optionB={optionB} setOptionB={setOptionB} repository={repository} setRepository={setRepository} currentLeaning={currentLeaning} setCurrentLeaning={setCurrentLeaning} currentLeaningReason={currentLeaningReason} setCurrentLeaningReason={setCurrentLeaningReason} enabledProviders={enabledProviders} setEnabledProviders={setEnabledProviders} models={models} setModels={setModels} startDebate={startDebate} />}
-          {screen === "debate" && <LiveDebateScreen providers={providers} debate={debate} runSummary={runSummary} discovery={discovery} positions={positions} nextRound={nextRound} degradedRationale={degradedRationale} setDegradedRationale={setDegradedRationale} dispatchRound={dispatchRound} resumeDebate={resumeDebate} proceedDegraded={proceedDegraded} cancelDebate={cancelDebate} setScreen={setScreen} />}
+          {screen === "debate" && <LiveDebateScreen providers={providers} debate={debate} runSummary={runSummary} discovery={discovery} positions={positions} nextRound={nextRound} snapshotReview={snapshotReview} decideSnapshotReview={decideSnapshotReview} degradedRationale={degradedRationale} setDegradedRationale={setDegradedRationale} dispatchRound={dispatchRound} resumeDebate={resumeDebate} proceedDegraded={proceedDegraded} cancelDebate={cancelDebate} setScreen={setScreen} />}
           {screen === "decision" && <LiveDecisionScreen debate={debate} runSummary={runSummary} positions={positions} evidence={evidence} decisionRationale={decisionRationale} setDecisionRationale={setDecisionRationale} decisionKind={decisionKind} setDecisionKind={setDecisionKind} selectedOption={selectedOption} setSelectedOption={setSelectedOption} modifiedDecision={modifiedDecision} setModifiedDecision={setModifiedDecision} decisionRecord={decisionRecord} exportSummary={exportSummary} recordDecision={recordDecision} compileExport={compileExport} dispatchRound={dispatchRound} setScreen={setScreen} />}
           {screen === "export" && <ExportScreen exportSummary={exportSummary} debate={debate} />}
           {screen === "settings" && <SettingsScreen providers={providers} settingsView={settingsView} setSettingsView={setSettingsView} />}
@@ -655,6 +740,8 @@ function LiveDebateScreen(props: {
   discovery: DiscoveryResult | null;
   positions: StoredPosition[];
   nextRound: number | null;
+  snapshotReview: SnapshotReviewStatus | null;
+  decideSnapshotReview: (decision: "approve" | "reject") => void;
   degradedRationale: string;
   setDegradedRationale: (value: string) => void;
   dispatchRound: (round: number, retry?: boolean) => void;
@@ -665,6 +752,7 @@ function LiveDebateScreen(props: {
 }) {
   const phases = ["PREFLIGHT", "SNAPSHOT", "OPENING", "CROSS-EXAM", "FINAL POSITIONS"];
   const phaseIndex = props.debate?.state === "DRAFT" ? 0
+    : props.debate?.state === "SNAPSHOT_REVIEW_REQUIRED" ? 1
     : props.debate?.state === "OPENING" ? 2
     : props.debate?.state === "CROSS_EXAMINATION" ? 3
     : props.debate?.state === "FINAL_POSITIONS" ? 4
@@ -686,6 +774,13 @@ function LiveDebateScreen(props: {
       <div className="phase-track">
         {phases.map((phase, index) => <div className={"phase " + (index < phaseIndex ? "complete" : index === phaseIndex ? "current" : "")} key={phase}><span>{index < phaseIndex ? "✓" : String(index + 1).padStart(2, "0")}</span><small>{phase}</small></div>)}
       </div>
+      {props.snapshotReview?.decision === "PENDING" && props.debate?.state === "SNAPSHOT_REVIEW_REQUIRED" ? <div className="snapshot-review-panel">
+        <div className="panel-heading"><div><span className="section-kicker">HUMAN SAFETY REVIEW</span><h2>Approve this exact sanitized snapshot</h2></div><span className="count-badge">{props.snapshotReview.secret_exclusion_count} SECRET FLAGS</span></div>
+        <p className="review-intro">Provider dispatch is paused. Review the exclusion metadata and hashes below. No excluded file contents, secret values, or provider context are shown or persisted in this review record.</p>
+        <div className="review-hash-grid"><div><span>SNAPSHOT ID</span><strong>{props.snapshotReview.snapshot_id}</strong></div><div><span>MANIFEST SHA-256</span><strong>{props.snapshotReview.manifest_hash}</strong></div><div><span>EXCLUSION SET SHA-256</span><strong>{props.snapshotReview.exclusion_set_hash}</strong></div></div>
+        <div className="review-exclusion-list"><div className="section-kicker">EXCLUDED PATH METADATA</div>{props.snapshotReview.exclusions.map((item) => <div className="review-exclusion-row" key={item.relative_path + item.reason}><code>{item.relative_path}</code><span>{item.reason.replaceAll("_", " ")}</span></div>)}</div>
+        <div className="form-actions"><button className="primary-button" onClick={() => props.decideSnapshotReview("approve")}><span>Approve exact snapshot</span><b>✓</b></button><button className="secondary-button" onClick={() => props.decideSnapshotReview("reject")}>Reject and abort</button><button className="text-button muted-button" onClick={props.cancelDebate}>Cancel review</button></div>
+      </div> : null}
       <div className="debate-layout">
         <div className="turns-panel">
           <div className="panel-heading"><div><span className="section-kicker">TURN MONITOR</span><h2>Independent positions</h2></div><span className="count-badge">{props.runSummary ? props.runSummary.valid_positions + " / " + props.providers.length + " VALID" : props.providers.length + " SEATS"}</span></div>

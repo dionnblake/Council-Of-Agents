@@ -19,13 +19,14 @@ QUESTION
 
 ## Current build
 
-V1 is currently a `RELEASE_CANDIDATE`, not production-certified. The installer and local persisted-debate path are tested, while a current-host authenticated three-seat R1/R2/R3 run, human decision, export, and live provider cancellation/recovery remain unverified. M1 has not started. See [the V1 production certification record](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
+V1 is currently a `RELEASE_CANDIDATE`, not production-certified. The installer, local persisted-debate path, and explicit persisted snapshot-review gate are tested. A current-host authenticated three-seat R1/R2/R3 run, human decision, export, and live provider cancellation/recovery remain unverified. M1 has not started. See [the V1 production certification record](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
 
 The V1 implementation now includes:
 
 - a Rust controller core with deterministic state transitions and a human decision gate;
 - strict output-position validation, controller-owned claim IDs, semantic checks, and per-seat repair policy;
 - byte-preserving snapshot, secret/config exclusion, reparse-point rejection, native ACL sealing, and mechanical citation verification;
+- persisted `SNAPSHOT_REVIEW_REQUIRED` state with exact snapshot/manifest/exclusion-set binding, safe exclusion metadata, source-change invalidation, and explicit approve/reject IPC;
 - immutable packet hashing, WSL stdin bridging, Linux payload hash verification, and separate scratch paths;
 - fresh-process provider command contracts for Claude, Antigravity, and Codex WSL;
 - SQLite persistence for debates, turns, attempts, raw artifacts, positions, packets, snapshots, decisions, exports, safety events, and a hash-chained append-only audit log;

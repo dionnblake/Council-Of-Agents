@@ -7,6 +7,10 @@ pub enum DebateEvent {
     PreflightPassed,
     SnapshotStarted,
     SnapshotReady,
+    SnapshotReviewRequired,
+    SnapshotReviewApproved,
+    SnapshotReviewRejected,
+    SnapshotReviewInvalidated,
     OpeningStarted,
     OpeningComplete,
     IndependentOpeningComplete,
@@ -87,6 +91,22 @@ fn next_state(state: &DebateState, event: &DebateEvent) -> Option<DebateState> {
         (Draft, PreflightPassed) => Some(Preflight),
         (Preflight, SnapshotStarted) => Some(Snapshotting),
         (Snapshotting, SnapshotReady) => Some(Ready),
+        (Snapshotting, DebateEvent::SnapshotReviewRequired) => {
+            Some(DebateState::SnapshotReviewRequired)
+        }
+        (DebateState::SnapshotReviewRequired, DebateEvent::SnapshotReviewApproved) => Some(Ready),
+        (DebateState::SnapshotReviewRequired, DebateEvent::SnapshotReviewRejected) => {
+            Some(DebateState::SafetyAbort)
+        }
+        (Ready, DebateEvent::SnapshotReviewInvalidated) => {
+            Some(DebateState::SnapshotReviewRequired)
+        }
+        (CrossExamination, DebateEvent::SnapshotReviewInvalidated) => {
+            Some(DebateState::SnapshotReviewRequired)
+        }
+        (FinalPositions, DebateEvent::SnapshotReviewInvalidated) => {
+            Some(DebateState::SnapshotReviewRequired)
+        }
         (Ready, OpeningStarted) => Some(Opening),
         (Ready, CrossExaminationStarted) => Some(CrossExamination),
         (Ready, FinalPositionsStarted) => Some(FinalPositions),
@@ -104,6 +124,7 @@ fn next_state(state: &DebateState, event: &DebateEvent) -> Option<DebateState> {
             Draft
             | Preflight
             | Snapshotting
+            | DebateState::SnapshotReviewRequired
             | Ready
             | Opening
             | CrossExamination
@@ -116,6 +137,7 @@ fn next_state(state: &DebateState, event: &DebateEvent) -> Option<DebateState> {
             Draft
             | Preflight
             | Snapshotting
+            | DebateState::SnapshotReviewRequired
             | Ready
             | Opening
             | CrossExamination
@@ -127,6 +149,7 @@ fn next_state(state: &DebateState, event: &DebateEvent) -> Option<DebateState> {
             Draft
             | Preflight
             | Snapshotting
+            | DebateState::SnapshotReviewRequired
             | Ready
             | Opening
             | CrossExamination
@@ -204,6 +227,67 @@ mod tests {
                 .transition(DebateEvent::IndependentOpeningComplete)
                 .unwrap(),
             DebateState::AwaitingHumanDecision
+        );
+    }
+
+    #[test]
+    fn snapshot_review_is_a_persisted_gate_not_a_safety_dead_end() {
+        let mut machine = DebateStateMachine::new(DebateState::Draft);
+        machine.transition(DebateEvent::PreflightPassed).unwrap();
+        machine.transition(DebateEvent::SnapshotStarted).unwrap();
+        assert_eq!(
+            machine
+                .transition(DebateEvent::SnapshotReviewRequired)
+                .unwrap(),
+            DebateState::SnapshotReviewRequired
+        );
+        assert_eq!(
+            machine
+                .transition(DebateEvent::SnapshotReviewApproved)
+                .unwrap(),
+            DebateState::Ready
+        );
+    }
+
+    #[test]
+    fn stale_snapshot_review_returns_to_review_and_rejection_aborts() {
+        let mut machine = DebateStateMachine::new(DebateState::Ready);
+        assert_eq!(
+            machine
+                .transition(DebateEvent::SnapshotReviewInvalidated)
+                .unwrap(),
+            DebateState::SnapshotReviewRequired
+        );
+        assert_eq!(
+            DebateStateMachine::new(DebateState::SnapshotReviewRequired)
+                .transition(DebateEvent::SnapshotReviewRejected)
+                .unwrap(),
+            DebateState::SafetyAbort
+        );
+        for state in [DebateState::CrossExamination, DebateState::FinalPositions] {
+            let mut machine = DebateStateMachine::new(state);
+            assert_eq!(
+                machine
+                    .transition(DebateEvent::SnapshotReviewInvalidated)
+                    .unwrap(),
+                DebateState::SnapshotReviewRequired
+            );
+            assert_eq!(
+                machine
+                    .transition(DebateEvent::SnapshotReviewApproved)
+                    .unwrap(),
+                DebateState::Ready
+            );
+        }
+    }
+
+    #[test]
+    fn review_required_state_can_be_cancelled_but_not_resumed_around_the_gate() {
+        let mut machine = DebateStateMachine::new(DebateState::SnapshotReviewRequired);
+        assert!(machine.transition(DebateEvent::Resume).is_err());
+        assert_eq!(
+            machine.transition(DebateEvent::Cancel).unwrap(),
+            DebateState::Cancelled
         );
     }
 }

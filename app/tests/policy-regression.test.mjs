@@ -76,3 +76,18 @@ test("provider limitations and requested/served status remain visible", () => {
   assert.match(appSource, /No provider state is hidden/);
   assert.match(appSource, /certification/i);
 });
+
+test("secret snapshot review is persisted, exact, and human-controlled", () => {
+  assert.match(appSource, /invoke<SnapshotReviewStatus \| null>\("snapshot_review_status"/);
+  assert.match(appSource, /invoke<SnapshotReviewStatus>\(command/);
+  assert.match(appSource, /snapshotId: snapshotReview\.snapshot_id/);
+  assert.match(appSource, /manifestHash: snapshotReview\.manifest_hash/);
+  assert.match(appSource, /exclusionSetHash: snapshotReview\.exclusion_set_hash/);
+  assert.match(appSource, /Provider dispatch paused\. Review the exact sanitized snapshot/);
+  assert.match(liveDebateScreen, /Approve this exact sanitized snapshot/);
+  assert.match(liveDebateScreen, /No excluded file contents, secret values, or provider context/);
+  assert.match(liveDebateScreen, /Approve exact snapshot/);
+  assert.match(liveDebateScreen, /Reject and abort/);
+  assert.match(liveDebateScreen, /snapshotReview\?\.decision === "PENDING"/);
+  assert.match(appSource, /SNAPSHOT_REVIEW_REQUIRED/);
+});

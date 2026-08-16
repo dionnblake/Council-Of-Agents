@@ -12,7 +12,9 @@ use crate::model::{
 };
 use crate::packet::WrittenPacket;
 use crate::providers::ProviderCallResult;
-use crate::snapshot::SnapshotManifest;
+use crate::snapshot::{
+    SnapshotManifest, SnapshotReviewDecision, SnapshotReviewRecord, snapshot_review_id,
+};
 use crate::state::{DebateEvent, DebateStateMachine};
 
 #[derive(Debug, Error)]
@@ -179,6 +181,20 @@ impl Database {
               relative_path TEXT NOT NULL,
               reason TEXT NOT NULL,
               detail TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS snapshot_reviews (
+              id TEXT PRIMARY KEY,
+              debate_id TEXT NOT NULL REFERENCES debates(id),
+              snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
+              manifest_hash TEXT NOT NULL,
+              exclusion_set_hash TEXT NOT NULL,
+              source_tree_hash TEXT NOT NULL,
+              secret_exclusion_count INTEGER NOT NULL,
+              exclusions_json TEXT NOT NULL,
+              decision TEXT NOT NULL,
+              rationale TEXT,
+              created_at TEXT NOT NULL,
+              reviewed_at TEXT
             );
             CREATE TABLE IF NOT EXISTS context_packets (
               packet_id TEXT PRIMARY KEY,
@@ -1014,6 +1030,127 @@ impl Database {
         .transpose()
     }
 
+    pub fn save_snapshot_review_pending(
+        &self,
+        record: &SnapshotReviewRecord,
+    ) -> Result<(), DatabaseError> {
+        if record.decision != SnapshotReviewDecision::Pending {
+            return Err(DatabaseError::Conflict(
+                "only pending snapshot reviews may be created".to_string(),
+            ));
+        }
+        let existing = self.snapshot_review_by_id(&record.id)?;
+        if let Some(existing) = existing {
+            if existing.debate_id == record.debate_id
+                && existing.snapshot_id == record.snapshot_id
+                && existing.manifest_hash == record.manifest_hash
+                && existing.exclusion_set_hash == record.exclusion_set_hash
+                && existing.source_tree_hash == record.source_tree_hash
+                && existing.exclusions == record.exclusions
+                && existing.secret_exclusion_count == record.secret_exclusion_count
+                && existing.decision == SnapshotReviewDecision::Pending
+            {
+                return Ok(());
+            }
+            return Err(DatabaseError::Conflict(format!(
+                "snapshot review {} already exists with different evidence or decision",
+                record.id
+            )));
+        }
+        self.connection.execute(
+            "INSERT INTO snapshot_reviews (id, debate_id, snapshot_id, manifest_hash, exclusion_set_hash, source_tree_hash, secret_exclusion_count, exclusions_json, decision, rationale, created_at, reviewed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, NULL)",
+            params![
+                record.id,
+                record.debate_id,
+                record.snapshot_id,
+                record.manifest_hash,
+                record.exclusion_set_hash,
+                record.source_tree_hash,
+                record.secret_exclusion_count,
+                serde_json::to_string(&record.exclusions)?,
+                serde_json::to_string(&record.decision)?,
+                record.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn latest_snapshot_review(
+        &self,
+        debate_id: &str,
+    ) -> Result<Option<SnapshotReviewRecord>, DatabaseError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT id, debate_id, snapshot_id, manifest_hash, exclusion_set_hash, source_tree_hash, secret_exclusion_count, exclusions_json, decision, rationale, created_at, reviewed_at FROM snapshot_reviews WHERE debate_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                params![debate_id],
+                snapshot_review_row,
+            )
+            .optional()?;
+        row.map(deserialize_snapshot_review_row).transpose()
+    }
+
+    pub fn record_snapshot_review_decision(
+        &self,
+        debate_id: &str,
+        snapshot_id: &str,
+        manifest_hash: &str,
+        exclusion_set_hash: &str,
+        decision: SnapshotReviewDecision,
+        rationale: &str,
+    ) -> Result<SnapshotReviewRecord, DatabaseError> {
+        if decision == SnapshotReviewDecision::Pending {
+            return Err(DatabaseError::Conflict(
+                "a snapshot review decision must be approved or rejected".to_string(),
+            ));
+        }
+        let review_id =
+            snapshot_review_id(debate_id, snapshot_id, manifest_hash, exclusion_set_hash);
+        let Some(existing) = self.snapshot_review_by_id(&review_id)? else {
+            return Err(DatabaseError::Conflict(
+                "snapshot review evidence is not persisted".to_string(),
+            ));
+        };
+        if existing.decision != SnapshotReviewDecision::Pending {
+            return Err(DatabaseError::Conflict(
+                "snapshot review decision is immutable".to_string(),
+            ));
+        }
+        let reviewed_at = Utc::now().to_rfc3339();
+        self.connection.execute(
+            "UPDATE snapshot_reviews SET decision = ?1, rationale = ?2, reviewed_at = ?3 WHERE id = ?4 AND debate_id = ?5 AND snapshot_id = ?6 AND manifest_hash = ?7 AND exclusion_set_hash = ?8 AND decision = ?9",
+            params![
+                serde_json::to_string(&decision)?,
+                rationale,
+                reviewed_at,
+                review_id,
+                debate_id,
+                snapshot_id,
+                manifest_hash,
+                exclusion_set_hash,
+                serde_json::to_string(&SnapshotReviewDecision::Pending)?,
+            ],
+        )?;
+        self.snapshot_review_by_id(&review_id)?.ok_or_else(|| {
+            DatabaseError::Conflict("snapshot review decision could not be reloaded".to_string())
+        })
+    }
+
+    fn snapshot_review_by_id(
+        &self,
+        review_id: &str,
+    ) -> Result<Option<SnapshotReviewRecord>, DatabaseError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT id, debate_id, snapshot_id, manifest_hash, exclusion_set_hash, source_tree_hash, secret_exclusion_count, exclusions_json, decision, rationale, created_at, reviewed_at FROM snapshot_reviews WHERE id = ?1",
+                params![review_id],
+                snapshot_review_row,
+            )
+            .optional()?;
+        row.map(deserialize_snapshot_review_row).transpose()
+    }
+
     pub fn update_debate_provider_models(
         &self,
         debate_id: &str,
@@ -1219,6 +1356,85 @@ impl Database {
     }
 }
 
+fn snapshot_review_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+)> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get(11)?,
+    ))
+}
+
+fn deserialize_snapshot_review_row(
+    row: (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+    ),
+) -> Result<SnapshotReviewRecord, DatabaseError> {
+    let created_at = chrono::DateTime::parse_from_rfc3339(&row.10)
+        .map_err(|error| {
+            DatabaseError::Conflict(format!("invalid snapshot review timestamp: {error}"))
+        })?
+        .with_timezone(&Utc);
+    let reviewed_at = row
+        .11
+        .as_deref()
+        .map(chrono::DateTime::parse_from_rfc3339)
+        .transpose()
+        .map_err(|error| {
+            DatabaseError::Conflict(format!("invalid snapshot review timestamp: {error}"))
+        })?
+        .map(|value| value.with_timezone(&Utc));
+    Ok(SnapshotReviewRecord {
+        id: row.0,
+        debate_id: row.1,
+        snapshot_id: row.2,
+        manifest_hash: row.3,
+        exclusion_set_hash: row.4,
+        source_tree_hash: row.5,
+        secret_exclusion_count: u32::try_from(row.6)
+            .map_err(|_| DatabaseError::Conflict("invalid secret exclusion count".to_string()))?,
+        exclusions: serde_json::from_str(&row.7)?,
+        decision: serde_json::from_str(&row.8)?,
+        rationale: row.9,
+        created_at,
+        reviewed_at,
+    })
+}
+
 fn deserialize_debate_row(
     row: (
         String,
@@ -1268,7 +1484,12 @@ mod tests {
         Claim, Commitment, Debate, Intake, ModelSelection, PeerResponse,
         PeerResponseClassification, Position, ProviderKind, Reversibility,
     };
+    use crate::snapshot::{
+        SnapshotBuilder, SnapshotRequest, SnapshotReviewDecision,
+        snapshot_exclusion_review_identity, snapshot_review_id,
+    };
     use std::collections::BTreeMap;
+    use std::fs;
 
     #[test]
     fn audit_log_is_hash_chained_and_append_only() {
@@ -1292,6 +1513,103 @@ mod tests {
             .connection
             .execute("DELETE FROM audit_events WHERE sequence = 1", []);
         assert!(error.is_err());
+    }
+
+    #[test]
+    fn snapshot_review_persists_across_reopen_and_binds_exact_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let database_path = temp.path().join("council.sqlite3");
+        let source = temp.path().join("source");
+        let snapshots = temp.path().join("snapshots");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("README.md"), b"safe evidence").unwrap();
+        fs::write(source.join(".env"), b"API_KEY=not-for-providers-1234567890").unwrap();
+        let manifest = SnapshotBuilder::new()
+            .build(&SnapshotRequest {
+                source_root: source.clone(),
+                destination_root: snapshots,
+                snapshot_id: "snapshot-review-test".to_string(),
+            })
+            .unwrap();
+        let root = temp.path().join("snapshots").join(&manifest.snapshot_id);
+        let builder = SnapshotBuilder::new();
+        let source_tree_hash = builder.source_tree_hash(&source).unwrap();
+        let (exclusion_set_hash, exclusions) = snapshot_exclusion_review_identity(&manifest);
+        let mut models = BTreeMap::new();
+        models.insert(
+            ProviderKind::Claude,
+            ModelSelection::requested("test-model"),
+        );
+        let debate = Debate::new(Intake::default(), models);
+
+        let database = Database::open(&database_path).unwrap();
+        database.create_debate(&debate).unwrap();
+        database
+            .save_snapshot(&debate.id, &root, &manifest)
+            .unwrap();
+        let review = SnapshotReviewRecord {
+            id: snapshot_review_id(
+                &debate.id,
+                &manifest.snapshot_id,
+                &manifest.manifest_sha256,
+                &exclusion_set_hash,
+            ),
+            debate_id: debate.id.clone(),
+            snapshot_id: manifest.snapshot_id.clone(),
+            manifest_hash: manifest.manifest_sha256.clone(),
+            exclusion_set_hash,
+            source_tree_hash,
+            secret_exclusion_count: 1,
+            exclusions,
+            decision: SnapshotReviewDecision::Pending,
+            rationale: None,
+            created_at: Utc::now(),
+            reviewed_at: None,
+        };
+        database.save_snapshot_review_pending(&review).unwrap();
+        drop(database);
+
+        let database = Database::open(&database_path).unwrap();
+        let reopened = database
+            .latest_snapshot_review(&debate.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reopened.decision, SnapshotReviewDecision::Pending);
+        assert_eq!(reopened.manifest_hash, manifest.manifest_sha256);
+        assert_eq!(reopened.exclusion_set_hash, review.exclusion_set_hash);
+        let approved = database
+            .record_snapshot_review_decision(
+                &debate.id,
+                &manifest.snapshot_id,
+                &manifest.manifest_sha256,
+                &review.exclusion_set_hash,
+                SnapshotReviewDecision::Approved,
+                "safe review note",
+            )
+            .unwrap();
+        assert_eq!(approved.decision, SnapshotReviewDecision::Approved);
+        assert!(approved.reviewed_at.is_some());
+        let stored_exclusions: String = database
+            .connection
+            .query_row(
+                "SELECT exclusions_json FROM snapshot_reviews WHERE id = ?1",
+                params![review.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!stored_exclusions.contains("not-for-providers"));
+        assert!(
+            database
+                .record_snapshot_review_decision(
+                    &debate.id,
+                    &manifest.snapshot_id,
+                    &manifest.manifest_sha256,
+                    &review.exclusion_set_hash,
+                    SnapshotReviewDecision::Rejected,
+                    "should not overwrite approval",
+                )
+                .is_err()
+        );
     }
 
     #[test]

@@ -6,10 +6,13 @@ use council_core::{
     EvaluationMetrics, EvidenceIndex, FailureType, HumanDecision, HumanDecisionKind, Intake,
     LiveProviderExecutor, ModelSelection, POSITION_SCHEMA_VERSION, ProviderCallRequest,
     ProviderConfig, ProviderKind, ProviderPosition, ProviderRegistry, RoundRequest,
-    ServingIdentityStatus, SnapshotBuilder, SnapshotManifest, SnapshotRequest, TurnState,
+    ServingIdentityStatus, SnapshotBuilder, SnapshotManifest, SnapshotRequest,
+    SnapshotReviewDecision, SnapshotReviewExclusion, SnapshotReviewRecord, TurnState,
     VerifiedEvidence, WslBridgeRequest, build_r0_candidate_union, build_wsl_bridge_plan,
     compile_decision_record, compile_master_prompt, content_hash, deterministic_call_id,
-    ensure_subscription_environment, merge_discovery_proposals, new_id, validate_intake,
+    ensure_subscription_environment, merge_discovery_proposals, new_id,
+    snapshot_exclusion_review_identity, snapshot_review_id, validate_intake,
+    verify_sealed_snapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -90,10 +93,32 @@ struct RunRoundSummary {
     message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SnapshotReviewView {
+    debate_id: String,
+    snapshot_id: String,
+    manifest_hash: String,
+    exclusion_set_hash: String,
+    secret_exclusion_count: u32,
+    exclusions: Vec<SnapshotReviewExclusion>,
+    decision: SnapshotReviewDecision,
+    reviewed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotReviewInput {
+    debate_id: String,
+    snapshot_id: String,
+    manifest_hash: String,
+    exclusion_set_hash: String,
+}
+
 #[derive(Debug, Clone)]
 struct SnapshotContext {
     root: PathBuf,
     manifest: SnapshotManifest,
+    source_tree_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -748,31 +773,247 @@ fn snapshot_context_for_round(
             .latest_snapshot(&debate.id)
             .map_err(|error| error.to_string())?
         {
-            return Ok(Some(SnapshotContext { root, manifest }));
+            return Ok(Some(SnapshotContext {
+                root,
+                manifest,
+                source_tree_hash: None,
+            }));
         }
     }
     if round == 0 || round == 1 {
-        let snapshot_id = format!("snapshot-{}", debate.id);
-        let manifest = SnapshotBuilder::new()
-            .build(&SnapshotRequest {
-                source_root: source_root.clone(),
-                destination_root: data_dir.join("runtime").join("snapshots"),
-                snapshot_id,
-            })
-            .map_err(|error| error.to_string())?;
-        let root = data_dir
-            .join("runtime")
-            .join("snapshots")
-            .join(&manifest.snapshot_id);
-        database
-            .save_snapshot(&debate.id, &root, &manifest)
-            .map_err(|error| error.to_string())?;
-        Ok(Some(SnapshotContext { root, manifest }))
+        build_snapshot_context(
+            database,
+            debate,
+            data_dir,
+            &format!("snapshot-{}", debate.id),
+            source_root,
+        )
     } else {
         database
             .latest_snapshot(&debate.id)
-            .map(|snapshot| snapshot.map(|(root, manifest)| SnapshotContext { root, manifest }))
+            .map(|snapshot| {
+                snapshot.map(|(root, manifest)| SnapshotContext {
+                    root,
+                    manifest,
+                    source_tree_hash: None,
+                })
+            })
             .map_err(|error| error.to_string())
+    }
+}
+
+fn build_snapshot_context(
+    database: &Database,
+    debate: &Debate,
+    data_dir: &Path,
+    snapshot_id: &str,
+    source_root: &Path,
+) -> Result<Option<SnapshotContext>, String> {
+    let builder = SnapshotBuilder::new();
+    let before_hash = builder
+        .source_tree_hash(source_root)
+        .map_err(|error| error.to_string())?;
+    let manifest = builder
+        .build(&SnapshotRequest {
+            source_root: source_root.to_path_buf(),
+            destination_root: data_dir.join("runtime").join("snapshots"),
+            snapshot_id: snapshot_id.to_string(),
+        })
+        .map_err(|error| error.to_string())?;
+    let after_hash = builder
+        .source_tree_hash(source_root)
+        .map_err(|error| error.to_string())?;
+    if before_hash != after_hash {
+        return Err(
+            "repository contents changed while the sanitized snapshot was being created"
+                .to_string(),
+        );
+    }
+    let root = data_dir
+        .join("runtime")
+        .join("snapshots")
+        .join(&manifest.snapshot_id);
+    database
+        .save_snapshot(&debate.id, &root, &manifest)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(SnapshotContext {
+        root,
+        manifest,
+        source_tree_hash: Some(before_hash),
+    }))
+}
+
+fn snapshot_review_record(
+    database: &Database,
+    debate: &Debate,
+    snapshot: &SnapshotContext,
+) -> Result<SnapshotReviewRecord, String> {
+    let (exclusion_set_hash, exclusions) = snapshot_exclusion_review_identity(&snapshot.manifest);
+    let source_tree_hash = snapshot.source_tree_hash.clone().ok_or_else(|| {
+        "snapshot review requires the source fingerprint captured at build time".to_string()
+    })?;
+    let secret_exclusion_count = snapshot
+        .manifest
+        .exclusions
+        .iter()
+        .filter(|exclusion| {
+            matches!(
+                exclusion.reason,
+                council_core::snapshot::SnapshotExclusionReason::Secret
+            )
+        })
+        .count() as u32;
+    let record = SnapshotReviewRecord {
+        id: snapshot_review_id(
+            &debate.id,
+            &snapshot.manifest.snapshot_id,
+            &snapshot.manifest.manifest_sha256,
+            &exclusion_set_hash,
+        ),
+        debate_id: debate.id.clone(),
+        snapshot_id: snapshot.manifest.snapshot_id.clone(),
+        manifest_hash: snapshot.manifest.manifest_sha256.clone(),
+        exclusion_set_hash,
+        source_tree_hash,
+        secret_exclusion_count,
+        exclusions,
+        decision: SnapshotReviewDecision::Pending,
+        rationale: None,
+        created_at: chrono::Utc::now(),
+        reviewed_at: None,
+    };
+    database
+        .save_snapshot_review_pending(&record)
+        .map_err(|error| error.to_string())?;
+    Ok(record)
+}
+
+fn snapshot_review_view(record: SnapshotReviewRecord) -> SnapshotReviewView {
+    SnapshotReviewView {
+        debate_id: record.debate_id,
+        snapshot_id: record.snapshot_id,
+        manifest_hash: record.manifest_hash,
+        exclusion_set_hash: record.exclusion_set_hash,
+        secret_exclusion_count: record.secret_exclusion_count,
+        exclusions: record.exclusions,
+        decision: record.decision,
+        reviewed_at: record.reviewed_at.map(|value| value.to_rfc3339()),
+    }
+}
+
+fn require_snapshot_review(
+    database: &Database,
+    debate: &Debate,
+    snapshot: &SnapshotContext,
+) -> Result<String, String> {
+    let record = snapshot_review_record(database, debate, snapshot)?;
+    let detail = format!(
+        "snapshot review required for {} excluded file(s); review {} before provider dispatch",
+        record.secret_exclusion_count, record.manifest_hash
+    );
+    database
+        .record_safety_event(Some(&debate.id), "SECRET_REVIEW_REQUIRED", &detail)
+        .map_err(|error| error.to_string())?;
+    database
+        .transition_debate(&debate.id, DebateEvent::SnapshotReviewRequired)
+        .map_err(|error| error.to_string())?;
+    Ok(detail)
+}
+
+fn ensure_current_snapshot_review(
+    database: &Database,
+    debate: &Debate,
+    data_dir: &Path,
+) -> Result<Option<SnapshotReviewRecord>, String> {
+    let Some(review) = database
+        .latest_snapshot_review(&debate.id)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    let Some((root, manifest)) = database
+        .latest_snapshot(&debate.id)
+        .map_err(|error| error.to_string())?
+    else {
+        return Err("snapshot review exists without a persisted snapshot".to_string());
+    };
+    if review.snapshot_id != manifest.snapshot_id
+        || review.manifest_hash != manifest.manifest_sha256
+        || review.debate_id != debate.id
+    {
+        return Err("snapshot review is not bound to the latest persisted snapshot".to_string());
+    }
+    verify_sealed_snapshot(&root, &manifest).map_err(|error| error.to_string())?;
+    if review.decision == SnapshotReviewDecision::Rejected {
+        return Ok(Some(review));
+    }
+    let current_source_hash = SnapshotBuilder::new()
+        .source_tree_hash(Path::new(&manifest.source_root))
+        .map_err(|error| error.to_string())?;
+    if current_source_hash == review.source_tree_hash {
+        return Ok(Some(review));
+    }
+    if !matches!(
+        debate.state,
+        DebateState::Ready
+            | DebateState::SnapshotReviewRequired
+            | DebateState::CrossExamination
+            | DebateState::FinalPositions
+    ) {
+        return Err(
+            "the repository changed after snapshot review and the debate is already in flight"
+                .to_string(),
+        );
+    }
+    let snapshot_id = format!(
+        "snapshot-{}-{}",
+        debate.id,
+        &current_source_hash[..16.min(current_source_hash.len())]
+    );
+    let Some(snapshot) = build_snapshot_context(
+        database,
+        debate,
+        data_dir,
+        &snapshot_id,
+        Path::new(&manifest.source_root),
+    )?
+    else {
+        return Err("repository-grounded review requires a persisted snapshot".to_string());
+    };
+    let refreshed = snapshot_review_record(database, debate, &snapshot)?;
+    if debate.state != DebateState::SnapshotReviewRequired {
+        database
+            .transition_debate(&debate.id, DebateEvent::SnapshotReviewInvalidated)
+            .map_err(|error| error.to_string())?;
+    }
+    database
+        .record_safety_event(
+            Some(&debate.id),
+            "SNAPSHOT_REVIEW_INVALIDATED",
+            "repository contents changed; a new sanitized snapshot requires a new human review",
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(Some(refreshed))
+}
+
+fn ensure_snapshot_review_allows_dispatch(
+    database: &Database,
+    debate: &Debate,
+    data_dir: &Path,
+) -> Result<(), String> {
+    let Some(review) = ensure_current_snapshot_review(database, debate, data_dir)? else {
+        return Ok(());
+    };
+    match review.decision {
+        SnapshotReviewDecision::Approved => Ok(()),
+        SnapshotReviewDecision::Pending => Err(
+            "snapshot review is required before provider dispatch; approve the exact persisted snapshot"
+                .to_string(),
+        ),
+        SnapshotReviewDecision::Rejected => Err(
+            "snapshot review was rejected; provider dispatch is permanently blocked for this debate"
+                .to_string(),
+        ),
     }
 }
 
@@ -1238,11 +1479,154 @@ fn debate_discovery(
         .map_err(|error| error.to_string())
 }
 
+fn validated_snapshot_review_submission(
+    database: &Database,
+    input: &SnapshotReviewInput,
+    data_dir: &Path,
+) -> Result<(Debate, SnapshotReviewRecord), String> {
+    let debate = database
+        .load_debate(&input.debate_id)
+        .map_err(|error| error.to_string())?;
+    if debate.state != DebateState::SnapshotReviewRequired {
+        return Err(format!(
+            "snapshot review is not pending for this debate; current state is {:?}",
+            debate.state
+        ));
+    }
+    let review = ensure_current_snapshot_review(database, &debate, data_dir)?
+        .ok_or_else(|| "no persisted snapshot review is available".to_string())?;
+    if review.snapshot_id != input.snapshot_id
+        || review.manifest_hash != input.manifest_hash
+        || review.exclusion_set_hash != input.exclusion_set_hash
+        || review.decision != SnapshotReviewDecision::Pending
+    {
+        return Err(
+            "snapshot review identity is stale; refresh the review surface before deciding"
+                .to_string(),
+        );
+    }
+    let Some((root, manifest)) = database
+        .latest_snapshot(&debate.id)
+        .map_err(|error| error.to_string())?
+    else {
+        return Err("snapshot review has no persisted snapshot evidence".to_string());
+    };
+    let (exclusion_set_hash, exclusions) = snapshot_exclusion_review_identity(&manifest);
+    if manifest.snapshot_id != review.snapshot_id
+        || manifest.manifest_sha256 != review.manifest_hash
+        || exclusion_set_hash != review.exclusion_set_hash
+        || exclusions != review.exclusions
+    {
+        return Err(
+            "snapshot manifest or exclusion set changed; the review must be reopened".to_string(),
+        );
+    }
+    verify_sealed_snapshot(&root, &manifest).map_err(|error| error.to_string())?;
+    let current_source_hash = SnapshotBuilder::new()
+        .source_tree_hash(Path::new(&manifest.source_root))
+        .map_err(|error| error.to_string())?;
+    if current_source_hash != review.source_tree_hash {
+        return Err(
+            "repository contents changed; the current snapshot review must be refreshed"
+                .to_string(),
+        );
+    }
+    Ok((debate, review))
+}
+
+fn decide_snapshot_review(
+    app: tauri::AppHandle,
+    input: SnapshotReviewInput,
+    decision: SnapshotReviewDecision,
+) -> Result<SnapshotReviewView, String> {
+    let database = database_for(&app)?;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("cannot resolve app data directory: {error}"))?;
+    let (debate, _review) = validated_snapshot_review_submission(&database, &input, &data_dir)?;
+    let rationale = match decision {
+        SnapshotReviewDecision::Approved => {
+            "Human approved the exact sanitized snapshot and exclusion set."
+        }
+        SnapshotReviewDecision::Rejected => "Human rejected the exact sanitized snapshot.",
+        SnapshotReviewDecision::Pending => return Err("pending is not a decision".to_string()),
+    };
+    let updated = database
+        .record_snapshot_review_decision(
+            &debate.id,
+            &input.snapshot_id,
+            &input.manifest_hash,
+            &input.exclusion_set_hash,
+            decision.clone(),
+            rationale,
+        )
+        .map_err(|error| error.to_string())?;
+    let event = match decision {
+        SnapshotReviewDecision::Approved => DebateEvent::SnapshotReviewApproved,
+        SnapshotReviewDecision::Rejected => DebateEvent::SnapshotReviewRejected,
+        SnapshotReviewDecision::Pending => unreachable!(),
+    };
+    database
+        .transition_debate(&debate.id, event)
+        .map_err(|error| error.to_string())?;
+    database
+        .append_audit_event(
+            Some(&debate.id),
+            "SNAPSHOT_REVIEW_DECIDED",
+            serde_json::json!({
+                "decision": updated.decision,
+                "snapshot_id": updated.snapshot_id,
+                "manifest_hash": updated.manifest_hash,
+                "exclusion_set_hash": updated.exclusion_set_hash,
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(snapshot_review_view(updated))
+}
+
+#[tauri::command]
+fn snapshot_review_status(
+    app: tauri::AppHandle,
+    debate_id: String,
+) -> Result<Option<SnapshotReviewView>, String> {
+    let database = database_for(&app)?;
+    let debate = database
+        .load_debate(&debate_id)
+        .map_err(|error| error.to_string())?;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("cannot resolve app data directory: {error}"))?;
+    ensure_current_snapshot_review(&database, &debate, &data_dir)
+        .map(|review| review.map(snapshot_review_view))
+}
+
+#[tauri::command]
+fn approve_snapshot_review(
+    app: tauri::AppHandle,
+    input: SnapshotReviewInput,
+) -> Result<SnapshotReviewView, String> {
+    decide_snapshot_review(app, input, SnapshotReviewDecision::Approved)
+}
+
+#[tauri::command]
+fn reject_snapshot_review(
+    app: tauri::AppHandle,
+    input: SnapshotReviewInput,
+) -> Result<SnapshotReviewView, String> {
+    decide_snapshot_review(app, input, SnapshotReviewDecision::Rejected)
+}
+
 fn parse_event(event: &str) -> Result<DebateEvent, String> {
     match event {
         "PREFLIGHT_PASSED" => Ok(DebateEvent::PreflightPassed),
         "SNAPSHOT_STARTED" => Ok(DebateEvent::SnapshotStarted),
         "SNAPSHOT_READY" => Ok(DebateEvent::SnapshotReady),
+        "SNAPSHOT_REVIEW_REQUIRED" => Ok(DebateEvent::SnapshotReviewRequired),
+        "SNAPSHOT_REVIEW_APPROVED" => Ok(DebateEvent::SnapshotReviewApproved),
+        "SNAPSHOT_REVIEW_REJECTED" => Ok(DebateEvent::SnapshotReviewRejected),
+        "SNAPSHOT_REVIEW_INVALIDATED" => Ok(DebateEvent::SnapshotReviewInvalidated),
         "OPENING_STARTED" => Ok(DebateEvent::OpeningStarted),
         "OPENING_COMPLETE" => Ok(DebateEvent::OpeningComplete),
         "INDEPENDENT_OPENING_COMPLETE" => Ok(DebateEvent::IndependentOpeningComplete),
@@ -1436,6 +1820,15 @@ fn run_discovery_round(
         .path()
         .app_data_dir()
         .map_err(|error| format!("cannot resolve app data directory: {error}"))?;
+    if debate.state == DebateState::SnapshotReviewRequired {
+        return Err(
+            "snapshot review is required before provider dispatch; open the persisted review"
+                .to_string(),
+        );
+    }
+    if debate.intake.repository.is_some() {
+        ensure_snapshot_review_allows_dispatch(&database, &debate, &data_dir)?;
+    }
     let snapshot_context = if debate.state == DebateState::Draft {
         database
             .transition_debate(&debate_id, DebateEvent::PreflightPassed)
@@ -1456,27 +1849,13 @@ fn run_discovery_round(
             }
         };
         if let Some(snapshot) = &snapshot_context {
-            let secret_count = snapshot
-                .manifest
-                .exclusions
-                .iter()
-                .filter(|exclusion| {
-                    matches!(
-                        exclusion.reason,
-                        council_core::snapshot::SnapshotExclusionReason::Secret
-                    )
-                })
-                .count();
-            if secret_count > 0 {
-                let detail = format!(
-                    "snapshot excluded {secret_count} secret-looking file(s); human review is required before provider dispatch"
-                );
-                database
-                    .record_safety_event(Some(&debate_id), "SECRET_REVIEW_REQUIRED", &detail)
-                    .map_err(|error| error.to_string())?;
-                database
-                    .transition_debate(&debate_id, DebateEvent::SafetyAbort)
-                    .map_err(|error| error.to_string())?;
+            if snapshot.manifest.exclusions.iter().any(|exclusion| {
+                matches!(
+                    exclusion.reason,
+                    council_core::snapshot::SnapshotExclusionReason::Secret
+                )
+            }) {
+                let detail = require_snapshot_review(&database, &debate, snapshot)?;
                 return Err(detail);
             }
         }
@@ -1488,7 +1867,11 @@ fn run_discovery_round(
         database
             .latest_snapshot(&debate_id)
             .map_err(|error| error.to_string())?
-            .map(|(root, manifest)| SnapshotContext { root, manifest })
+            .map(|(root, manifest)| SnapshotContext {
+                root,
+                manifest,
+                source_tree_hash: None,
+            })
     } else {
         return Err(format!(
             "R0 requires DRAFT or READY, found {:?}",
@@ -2058,6 +2441,15 @@ fn run_round(
         .path()
         .app_data_dir()
         .map_err(|error| format!("cannot resolve app data directory: {error}"))?;
+    if debate.state == DebateState::SnapshotReviewRequired {
+        return Err(
+            "snapshot review is required before provider dispatch; open the persisted review"
+                .to_string(),
+        );
+    }
+    if debate.intake.repository.is_some() {
+        ensure_snapshot_review_allows_dispatch(&database, &debate, &data_dir)?;
+    }
     let mut snapshot_context = None;
     match round {
         1 => {
@@ -2082,31 +2474,13 @@ fn run_round(
                         }
                     };
                 if let Some(snapshot) = &snapshot_context {
-                    let secret_count = snapshot
-                        .manifest
-                        .exclusions
-                        .iter()
-                        .filter(|exclusion| {
-                            matches!(
-                                exclusion.reason,
-                                council_core::snapshot::SnapshotExclusionReason::Secret
-                            )
-                        })
-                        .count();
-                    if secret_count > 0 {
-                        let detail = format!(
-                            "snapshot excluded {secret_count} secret-looking file(s); human review is required before any provider dispatch"
-                        );
-                        database
-                            .record_safety_event(
-                                Some(&debate_id),
-                                "SECRET_REVIEW_REQUIRED",
-                                &detail,
-                            )
-                            .map_err(|db_error| db_error.to_string())?;
-                        database
-                            .transition_debate(&debate_id, DebateEvent::SafetyAbort)
-                            .map_err(|db_error| db_error.to_string())?;
+                    if snapshot.manifest.exclusions.iter().any(|exclusion| {
+                        matches!(
+                            exclusion.reason,
+                            council_core::snapshot::SnapshotExclusionReason::Secret
+                        )
+                    }) {
+                        let detail = require_snapshot_review(&database, &debate, snapshot)?;
                         return Err(detail);
                     }
                 }
@@ -2183,7 +2557,11 @@ fn run_round(
         snapshot_context = database
             .latest_snapshot(&debate_id)
             .map_err(|error| error.to_string())?
-            .map(|(root, manifest)| SnapshotContext { root, manifest });
+            .map(|(root, manifest)| SnapshotContext {
+                root,
+                manifest,
+                source_tree_hash: None,
+            });
         if snapshot_context.is_none() {
             let detail = "repository-grounded debate has no persisted sanitized snapshot";
             database
@@ -3115,6 +3493,9 @@ fn main() {
             debate_evidence,
             debate_evaluation,
             debate_discovery,
+            snapshot_review_status,
+            approve_snapshot_review,
+            reject_snapshot_review,
             transition_debate,
             run_round,
             record_decision,
