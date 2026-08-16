@@ -7,6 +7,7 @@ Own durable security contracts and threat boundaries for Council of Agents.
 ## Ownership
 
 - BOUNDARY-CONTRACT.md owns provider, snapshot, packet, billing, and process-containment rules.
+- PUBLIC-REPOSITORY-DATA-POLICY.md owns public-release privacy and data-handling rules.
 
 ## Local Contracts
 
