@@ -20,6 +20,7 @@ Own the Tauri 2 shell, React command-center UI, and the typed IPC boundary for C
 ## Verification
 
 - Run npm run build from app/.
+- Run npm test from app/ for the dependency-free frontend policy regression suite.
 - Run cargo check -p council-desktop with the workspace target directory.
 - For Windows release certification, run `npx tauri build --bundles nsis` from app/ and verify the generated installer artifact.
 - Perform a desktop/browser smoke check when the Tauri runtime is available; report it separately from compile verification.
@@ -28,3 +29,4 @@ Own the Tauri 2 shell, React command-center UI, and the typed IPC boundary for C
 
 - src/ owns React UI implementation under this contract.
 - src-tauri/ owns Rust shell commands under this contract.
+- tests/ owns dependency-free frontend policy regression tests under this contract.

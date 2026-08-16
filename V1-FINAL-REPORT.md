@@ -1,211 +1,140 @@
 # Council of Agents V1 Final Report
 
-Date: 2026-08-15
+Date: 2026-08-16
+Audited starting commit: `189f867a600633ce80be8b392959af0920b2c5d7`
 
 ## Executive verdict
 
 ```text
-V1_STATUS = IMPLEMENTED_WITH_DECLARED_RUNTIME_BLOCKER
-DEFINITION_OF_DONE = IMPLEMENTATION_VERIFIED; LIVE_PROVIDER_CERTIFICATION_PENDING
+V1_STATUS = RELEASE_CANDIDATE
+DEFINITION_OF_DONE = NOT MET: current-host authenticated three-seat R1/R2/R3 execution, final positions, human decision, deterministic export, and live provider cancellation/recovery remain untested
 M1 = NOT_STARTED
 ```
 
-The V1 implementation is present across the Rust controller, SQLite persistence, safety boundary, provider contracts, Tauri desktop shell, React command center, schemas, fixtures, skills, and documentation. The final local verification pass passed formatting, 29 Rust tests, workspace checking, the React production build, CLI safety gates, synthetic snapshot/evidence checks, and a native Tauri window launch.
+The implementation is present and the local controller, frontend policy, privacy, build, and NSIS installer gates are covered. The evidence is not sufficient to claim production certification because the current safe provider gate blocked authenticated dispatch. No API-key fallback, billing change, credential change, or autonomous coding handoff was used.
 
-The product is not marked fully certified because the current Windows process environment reports a blocked billing/routing variable. The controller correctly refuses to route around that guard, so no authenticated Claude, Antigravity, or Codex WSL provider call was launched during this build pass. The prior M0.8 seat certifications remain the evidence basis for the lineup, but a current-host live three-seat R1/R2/R3 run is still pending.
+The complete gate record is [docs/evidence/V1-PRODUCTION-CERTIFICATION.md](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
 
-## What was implemented
+## 1. Current commit and scope
 
-### Controller and domain
+The certification audit started from `189f867a600633ce80be8b392959af0920b2c5d7` on `main`. This pass finished V1 certification work only. It did not start M1, redesign the architecture, or add product features.
 
-- Rust core owns intake validation, deterministic debate state, provider lifecycle, persistence, safety gates, structured output validation, semantic validation, repair policy, evidence, stateless reconstruction, evaluation metrics, and deterministic compilation.
-- Debate lifecycle is R1 opening, R2 cross-examination, R3 final positions, human decision, deterministic compile, and local export.
-- Independent-only evaluation is explicit and stops at the human gate after opening positions.
-- R0 stack discovery is bounded, preserves the status quo, limits owner alternatives, and is embedded in stack-selection packets.
-- R2 peer positions are anonymized before delivery. R3 revisions require a reason and prior-position hash. Claim relations, concessions, disputes, and unresolved disagreements are persisted.
-- A degraded-seat path requires a human rationale and at least two remaining seats. The council never silently shrinks.
-- Human decisions preserve unanimity, minority positions, selected option, modified decision, rationale, and verified/unverified evidence.
+## 2. Live-provider evidence
 
-### Safety and evidence
+Individual seat evidence is carried forward from [M0.8-FINDINGS.md](M0.8-FINDINGS.md) and [CODEX-WSL-FINAL-CERTIFICATION.md](CODEX-WSL-FINAL-CERTIFICATION.md): Claude 20/20 with verified model identity; Antigravity 17/20 with one repair and no served-model report; Codex WSL 20/20 with isolation/auth/sandbox/packet/stateless passes and no served-model report.
 
-- Real repositories are never passed directly to providers. The controller creates or reloads a Council-owned sanitized snapshot.
-- Snapshot copying preserves file bytes, excludes instructions/config/hooks/MCP/Git/secret matches, rejects symlinks and reparse points, records exclusions, hashes files, and seals the evidence tree read-only.
-- Provider packets are exact-byte, immutable, hashed files. Rendered skill names and versions remain in the packet.
-- Codex payloads are streamed into `CouncilCodexWSL` over WSL stdin. The Windows repository is not mounted. Linux snapshot, packet, and schema hashes are checked before Codex dispatch, with separate Linux scratch.
-- Evidence verification distinguishes `VERIFIED_EXACT`, `VERIFIED_CONTENT_FOUND_ELSEWHERE`, and `UNVERIFIED`, and persists content/file hashes.
-- API-key, custom-provider, custom-base-URL, and alternate routing variables are rejected without printing values.
+Those records do not prove a current Tauri debate. The current-host preflight failed closed on the billing/routing guard, so no authenticated current-host R1/R2/R3 provider round ran. The installed app showed the unavailable-seat state and explicit retry/cancel/degraded controls, but no provider position was dispatched.
 
-### Provider contracts
+The headless preflight reported `BILLING = BLOCKED_ENVIRONMENT_VARIABLE_PRESENT`; the three provider contracts reported `preflight=READY` with their requested model IDs. That READY status is not live execution evidence, and no provider process was launched after the guard failed.
 
-The registry contains exactly the three required seats:
+## 3. Repository and policy evidence
+
+The Rust controller remains the policy authority for state transitions, packet/snapshot boundaries, provider process contracts, failure handling, recovery, the human decision gate, deterministic export, and the no-autonomous-implementation boundary. The React layer surfaces those states and now has focused policy regression tests.
+
+The current installed-app record is:
 
 ```text
-Claude Code       claude-haiku-4-5-20251001   Pass
-Antigravity CLI   gemini-3.7-flash-low        PassWithDeclaredLimitation
-Codex WSL         gpt-5.6-luna                PassWithDeclaredLimitation
+DEBATE_ID = debate-795181f0-43db-42c9-97ff-0af9b14fb9f0
+QUESTION = Should Council keep a local-first desktop architecture for V1?
+CREATED_STATE = DRAFT
+FINAL_TEST_STATE = CANCELLED
+DATABASE_SHA256_AFTER_CLOSE = C64E111B930815B345AE08F3DB4D5B3237582950792014E071EE4A0DC1A66CA4
 ```
 
-Requested model IDs are persisted per debate and flow into provider dispatch. Reported served identity is never invented. Fresh processes, explicit timeouts, sanitized environments, raw artifacts, typed failures, deterministic call IDs, idempotent dispatch intents, and fail-closed restart recovery are implemented.
+No current-app R1/R2/R3 packet, response schema, repository snapshot, citation, decision, or export hash exists because the provider gate stopped dispatch before those artifacts were created. The carried-forward Codex WSL hashes remain preserved in the certification record and are explicitly labeled individual-seat evidence.
 
-### Desktop
+## 4. Cancellation and recovery
 
-- Tauri 2 command bridge covers provider status/auth, R0 candidates, debate creation, recent debates, positions, evidence, evaluation metrics, explicit round dispatch, degraded continuation, cancel/resume, human decision, and deterministic export.
-- React surfaces Home, New Debate, Active Debate, Decision, Export, and Settings.
-- New Debate supports compare/discover intake, options, constraints, optional repository grounding, per-seat requested model IDs, priority, and independent-only evaluation.
-- Active Debate shows seat state, packet/evaluation status, recovery/degraded controls, positions, dissent, and next deterministic transitions.
-- Decision shows persisted evidence verdicts and requires a human decision/rationale before export.
-- Export writes only to Council-owned application data and explicitly provides no implementation handoff.
-- The app includes the Tauri 2 CLI as a development dependency. `npx tauri dev --no-watch` built and launched a responsive native `Council of Agents` window in this pass.
+- The installed Tauri app created a real SQLite debate and exposed recovery controls when seats were unavailable.
+- The installed-app cancel action persisted the debate as `CANCELLED` and showed the no-handoff/no-implementation notice.
+- A fresh launch found the same persisted debate.
+- A reinstall launch also found the same persisted debate.
+- Live provider-process cancellation, WSL termination fallback, and interrupted-dispatch recovery remain untested in this current product certification.
 
-### Skills
+## 5. Automated tests and local verification
 
-The repository contains exactly five top-level reasoning-only V1 skill packages:
-
-```text
-architecture.v1
-design-taste.v1
-output-position.v1
-protocol.v1
-stack-selection.v1
-```
-
-## Final architecture
-
-```text
-React + TypeScript
-        |
-        v
-Tauri 2 typed commands
-        |
-        v
-council-core
-  |       |        |          |
-SQLite  packets  snapshots  provider runner
-                              |
-             +----------------+----------------+
-             |                |                |
-        Claude Code     Antigravity CLI   wsl.exe -> CouncilCodexWSL
-```
-
-The core remains testable without Tauri. Providers receive only fresh, file-based, immutable context. No provider can edit code, create branches, commit, push, deploy, open a coding harness, or become decision authority.
-
-## Certified seat evidence carried forward
-
-```text
-CLAUDE
-CERTIFICATION: PASS
-SCHEMA: 20/20
-PACKET: PASS
-STATELESS: PASS
-MODEL_IDENTITY: VERIFIED_MATCH
-REPAIR_POLICY: NO AUTOMATIC REPAIR
-
-ANTIGRAVITY
-CERTIFICATION: PASS_WITH_DECLARED_LIMITATION
-SCHEMA: 17/20
-PACKET: PASS
-STATELESS: PASS
-MODEL_IDENTITY: PROVIDER_DOES_NOT_REPORT
-REPAIR_POLICY: ONE REPAIR ATTEMPT
-
-CODEX WSL
-CERTIFICATION: PASS_WITH_DECLARED_LIMITATION
-ISOLATION: PASS
-AUTH: PASS
-SANDBOX: PASS
-SNAPSHOT_BRIDGE: PASS
-PACKET: PASS
-SCHEMA: 20/20
-STATELESS: PASS
-MODEL_IDENTITY: PROVIDER_DOES_NOT_REPORT
-REPAIR_POLICY: NO AUTOMATIC REPAIR
-```
-
-Sources: [M0.8-FINDINGS.md](M0.8-FINDINGS.md), [CODEX-WSL-FINAL-CERTIFICATION.md](CODEX-WSL-FINAL-CERTIFICATION.md).
-
-## Current host provider gate
-
-The final safe provider preflight returned:
-
-```text
-BILLING = BLOCKED_ENVIRONMENT_VARIABLE_PRESENT
-Claude Code = READY
-Antigravity CLI = READY
-Codex WSL = READY
-```
-
-The command reports presence state only. No credential values were printed, no API key was used, and no provider process was launched after the billing guard failed.
-
-## Verification matrix
-
-| Area | Result | Evidence |
+| Check | Result | Command |
 |---|---|---|
-| Rust formatting | PASS | `cargo fmt --all -- --check` |
-| Rust workspace tests | PASS, 29/29 | `cargo test --workspace` |
-| Workspace type/check validation | PASS | `cargo check --workspace` |
-| React TypeScript and production build | PASS | `npm run build` |
-| Global project verifier | VERIFIED | `RUSTUP_TOOLCHAIN=1.96.0-x86_64-pc-windows-msvc node verify.js` |
-| Tauri CLI | PASS | `npx tauri --version`, version 2.5.0 |
-| Native Tauri shell | PASS | `npx tauri dev --no-watch`; responsive native window observed |
-| CLI provider safety gate | PASS_WITH_RUNTIME_BLOCKER | billing guard blocked dispatch; all provider preflights READY |
-| SQLite synthetic demo | PASS | `council-cli demo` created DB and sealed packet in a temporary directory |
-| Snapshot copy | PASS | fixture snapshot preserved hashes and excluded `AGENTS.md` |
-| Evidence exact control | PASS | `VERIFIED_EXACT` |
-| Evidence shifted control | PASS | `VERIFIED_CONTENT_FOUND_ELSEWHERE` |
-| Deterministic compiler | PASS | unit test |
-| State machine and dispatch recovery | PASS | unit tests |
+| Rust formatting | PASS | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check` |
+| Rust workspace tests | PASS, 32 library tests and 0 doctests | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace` |
+| Rust workspace check | PASS | `rustup run 1.96.0-x86_64-pc-windows-msvc cargo check --workspace` |
+| Frontend policy regressions | PASS, 6/6 | `Push-Location app; npm test` |
+| Frontend production build | PASS | `Push-Location app; npm run build` |
+| Package-lock install | PASS | `Push-Location app; npm ci` |
+| Current-tree public repository privacy/sanitation | PASS, 0 confirmed live-secret matches | `node scripts/public-repo-audit.cjs` |
+| Reachable-history privacy audit | KNOWN LIMITATION | `--history` finds one pre-existing author/committer email in commit `189f867a6006`; it finds 0 confirmed live-secret matches. History was not rewritten. |
+| Global project verifier | VERIFIED | Pinned Rust toolchain; Evidence block reports `VERIFIED`. |
 
-## Safety and workflow coverage
+The frontend tests cover human decision rationale, preview non-persistence, failed/incomplete gating, explicit degraded action, recovery visibility, export-before-decision blocking, requested/served limitations, and no autonomous coding handoff. They are source-level contract tests, not a replacement for Rust policy tests or desktop UI smoke testing.
 
-| Control | Status |
-|---|---|
-| Snapshot byte copy and exclusion | PASS in unit/CLI checks |
-| Secret/config/instruction exclusion | PASS in unit/CLI checks |
-| Reparse/symlink rejection | PASS in snapshot implementation/tests |
-| Native Windows ACL sealing | IMPLEMENTED; live write matrix pending |
-| Packet size/marker handling | PASS in unit tests |
-| WSL bridge avoids `/mnt/c` | PASS in bridge tests and Codex certification evidence |
-| Linux payload hash verification | IMPLEMENTED; live current-host transfer pending |
-| Explicit provider environment allowlist | PASS in provider tests |
-| Antigravity `useG1Credits=false` guard | PASS in provider tests |
-| Codex subscription-only guard | PASS in provider contract and certification evidence |
-| Job Object/process containment | IMPLEMENTED; live provider cancellation pending |
-| `wsl --terminate CouncilCodexWSL` fallback | IMPLEMENTED; live cancellation pending |
-| Deterministic call identity/idempotency | PASS in persistence tests; live crash injection pending |
-| No automatic implementation handoff | PASS |
-| Human final authority | PASS |
+## 6. CI
 
-## Remaining runtime gates
+`.github/workflows/windows.yml` now runs on Windows for pushes, pull requests, and manual dispatch. It runs Rust formatting, full workspace tests, workspace checking, `npm ci`, frontend policy tests, the frontend build, and the fail-closed reachable-history privacy audit. It contains no live-provider step. The history audit will remain red until the pre-existing commit metadata is remediated; this pass did not rewrite history.
 
-These are the only material unverified items after this build pass:
+## 7. NSIS build and artifact hash
 
-1. Clear the current unsafe billing/routing environment variable without adding an API key, then run the authenticated three-seat provider flow.
-2. Exercise the Tauri IPC commands through the native window, including R1/R2/R3, evidence attachment, human decision, and export.
-3. Run a real repository-grounded round to verify live Windows snapshot creation, WSL transfer, Linux hash comparison, citations, and read-only enforcement.
-4. Run live cancellation, WSL termination fallback, restart persistence, and interrupted-dispatch recovery against the dedicated runtime.
-5. Produce and verify an installer only after the runtime gates pass. Bundling remains intentionally disabled in this checkout.
-
-These gates require safe provider availability or explicit host/runtime access. They are not permission to route through Platform API billing or to weaken the isolation boundary.
-
-## Exact verification commands
+Command:
 
 ```powershell
-Set-Location 'C:\Users\<USER>\Desktop\VIBE CODING PROJECTS\Council Of Agents'
-$env:RUSTUP_TOOLCHAIN = '1.96.0-x86_64-pc-windows-msvc'
-$env:CARGO_TARGET_DIR = 'C:\council-target'
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo check --workspace
-rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- providers
 Push-Location app
-npm run build
-npx tauri --version
-npx tauri dev --no-watch
+npx tauri build --bundles nsis
 Pop-Location
 ```
 
-Do not start a live provider round until the provider status gate reports safe subscription-only routing and the required isolated configurations are available.
+Generated installer:
 
-## Closeout
+```text
+target/release/bundle/nsis/Council of Agents_0.1.0_x64-setup.exe
+SIZE = 3,435,685 bytes
+SHA256 = 8AA7AC664F9F990B80D5AA9841E8D8C1DCED1EDED281A5AD61E2A8B2556D743C
+```
 
-The V1 implementation is verified locally with a declared live-runtime blocker. M1 remains unopened. No provider configuration, account, credential, or billing setting was modified by this pass. The authorized public repository publication completed at [github.com/dionnblake/Council-Of-Agents](https://github.com/dionnblake/Council-Of-Agents) on the `main` branch at merge commit `71a3be4`.
+## 8. Install, launch, persistence, reinstall, and uninstall results
+
+The final rebuilt installer exited `0` into an isolated temporary install directory and produced `council-desktop.exe` and `uninstall.exe`. It launched a native `Council of Agents` window and was removed cleanly by its uninstaller. The clean app-data install, SQLite debate creation, provider limitation surface, cancellation, restart, and reinstall evidence was exercised against the earlier same-source NSIS build (`5843b1b542e3ca2a60a79036819619f13c451567b845ea40f2dd96d243153782`, 3,434,551 bytes); the final rebuilt artifact was separately install/launch/uninstall verified.
+
+The first silent uninstall exited `0` and removed its install directory. The same NSIS artifact was installed into a second isolated directory, launched successfully with the persisted canceled debate present, and its silent uninstall exited `0` and removed that directory. Existing user app data was backed up recoverably during the clean test and restored afterward. Temporary clean-test data remains outside the repository and contains no provider credential material.
+
+This is installer and local persistence certification. It is not live-provider certification.
+
+## 9. Gate classifications
+
+| Classification | V1 result |
+|---|---|
+| IMPLEMENTED | Controller, persistence, snapshot/packet boundary, provider contracts, Tauri bridge, UI states, human gate, deterministic local export, no-handoff boundary |
+| AUTOMATED_TESTED | Rust library 32/32, frontend 6/6, formatting, workspace check, frontend build, privacy/sanitation audit |
+| LIVE_TESTED | Individual provider-seat records only, carried forward with declared limitations |
+| INSTALLER_TESTED | NSIS build, clean install/launch/app data/debate/cancel/restart/reinstall/uninstall |
+| KNOWN_LIMITATION | Billing/routing guard prevented safe current-host live provider execution |
+| NOT_TESTED | Current Tauri R1/R2/R3, live positions/citations, human decision/export from live positions, live provider cancellation/recovery, interrupted dispatch, WSL fallback in this product run |
+
+## 10. Limitations and remaining gates
+
+Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable current-host evidence for:
+
+1. safe subscription-only provider availability without adding an API key;
+2. a real sanitized repository-grounded Tauri R1/R2/R3 run for all selected seats;
+3. packet, schema, snapshot, citation, response, and served-model evidence;
+4. the human decision and deterministic export path from those live positions;
+5. live provider cancellation, WSL termination fallback, restart persistence, and interrupted-dispatch recovery.
+
+## 11. Files changed in this certification pass
+
+- `app/package.json`
+- `app/tests/AGENTS.md`
+- `app/tests/policy-regression.test.mjs`
+- `.github/workflows/windows.yml`
+- `docs/evidence/V1-PRODUCTION-CERTIFICATION.md`
+- `docs/evidence/README.md`
+- `docs/security/BOUNDARY-CONTRACT.md`
+- `docs/architecture/V1-IMPLEMENTATION-PLAN.md`
+- `README.md`
+- `app/AGENTS.md`
+- `docs/evidence/AGENTS.md`
+- this report
+
+## 12. Exact commit and closeout
+
+The exact audited starting commit is `189f867a600633ce80be8b392959af0920b2c5d7`. The final repository commit is reported in the closeout message after the final commit and push; no self-referential hash is written into this report. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`.
+
+No M1 work was started.

@@ -74,4 +74,8 @@ Provider output is advisory. Majority is not authority. The human decision is re
 
 ## Evidence status
 
-V1 runtime certification on the current host completed a controlled-repository three-seat debate through opening, cross-examination, final positions, human decision, and local export, with all three seats returning valid positions. Cancellation and restart recovery were also exercised. This remains host-specific evidence; future hosts may not have the same WSL distribution, authentication, or provider availability, so V1 still performs preflight, keeps unavailable seats visible, and requires an explicit degraded-mode choice before continuing.
+The repository contains durable individual-seat evidence for Claude, Antigravity, and Codex WSL, plus implementation and automated checks for the controller boundary. That evidence does not substantiate a current Tauri three-seat debate through R1, R2, R3, human decision, and local export.
+
+The current installed-app certification run created debate `debate-795181f0-43db-42c9-97ff-0af9b14fb9f0`, showed the unavailable-seat recovery/degraded controls, persisted cancellation, and verified restart/reinstall persistence. The safe billing/routing gate prevented provider dispatch, so current-host live positions, citation attachment, decision, export, provider-process cancellation, and interrupted-dispatch recovery remain unverified. The exact gate classifications and hashes are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
+
+Accordingly, the current product status is `RELEASE_CANDIDATE`, not `PRODUCTION_CERTIFIED`. V1 continues to perform preflight, keep unavailable seats visible, and require an explicit degraded-mode choice before continuing.

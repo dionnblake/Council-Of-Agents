@@ -510,11 +510,11 @@ REPAIR_POLICY: NO AUTOMATIC REPAIR
 CERTIFICATION: PASS_WITH_DECLARED_LIMITATION
 ~~~
 
-ALL THREE SEATS CERTIFIED
+ALL THREE INDIVIDUAL SEAT RECORDS CERTIFIED
 
-M1 MAY BEGIN
+This record certifies individual seat boundaries only. It does not certify the V1 Tauri product, does not establish a current three-seat R1/R2/R3 debate, and does not open product M1.
 
-M1 was not started by this pass.
+Product M1 was not started by this pass.
 
 ## Verification and Safety Record
 

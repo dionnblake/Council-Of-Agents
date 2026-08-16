@@ -1,0 +1,55 @@
+name: Windows verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0-x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Check Rust formatting
+        shell: pwsh
+        run: cargo fmt --all -- --check
+
+      - name: Run Rust workspace tests
+        shell: pwsh
+        run: cargo test --workspace
+
+      - name: Check Rust workspace
+        shell: pwsh
+        run: cargo check --workspace
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Run frontend policy regression tests
+        working-directory: app
+        run: npm test
+
+      - name: Build frontend
+        working-directory: app
+        run: npm run build
+
+      - name: Run public repository privacy and sanitation audit
+        shell: pwsh
+        run: node scripts/public-repo-audit.cjs --history

@@ -19,6 +19,8 @@ QUESTION
 
 ## Current build
 
+V1 is currently a `RELEASE_CANDIDATE`, not production-certified. The installer and local persisted-debate path are tested, while a current-host authenticated three-seat R1/R2/R3 run, human decision, export, and live provider cancellation/recovery remain unverified. M1 has not started. See [the V1 production certification record](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
+
 The V1 implementation now includes:
 
 - a Rust controller core with deterministic state transitions and a human decision gate;
@@ -51,7 +53,8 @@ rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- providers
 rustup run 1.96.0-x86_64-pc-windows-msvc cargo run -p council-cli -- demo --output .\artifacts\demo
 Push-Location app
-npm install
+npm ci
+npm test
 npm run build
 Pop-Location
 ~~~
@@ -76,4 +79,4 @@ The native smoke path requires the Windows WebView2 runtime. Provider dispatch r
 
 ## Evidence
 
-The feasibility and certification records remain in this root directory. The final Codex WSL certification is CODEX-WSL-FINAL-CERTIFICATION.md. The boundary contract is docs/security/BOUNDARY-CONTRACT.md, and the current verification index is docs/evidence/README.md.
+The feasibility and certification records remain in this root directory. The final Codex WSL certification is CODEX-WSL-FINAL-CERTIFICATION.md. The boundary contract is docs/security/BOUNDARY-CONTRACT.md, the current verification index is docs/evidence/README.md, and the V1 gate record is docs/evidence/V1-PRODUCTION-CERTIFICATION.md.

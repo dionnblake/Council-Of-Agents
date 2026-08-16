@@ -7,6 +7,7 @@ Own reproducible verification instructions and indexes for Council artifacts.
 ## Ownership
 
 - README.md explains what each verification layer proves.
+- V1-PRODUCTION-CERTIFICATION.md owns the durable V1 gate record and its evidence classifications.
 
 ## Local Contracts
 
