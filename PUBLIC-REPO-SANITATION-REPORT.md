@@ -34,7 +34,7 @@ The intentional Council architecture paths, including `/home/council`, remain do
 
 ## Verification
 
-- `node scripts/public-repo-audit.cjs --history`: PASS; current tree and 163 reachable blobs scanned in the remote verification clone.
+- `node scripts/public-repo-audit.cjs --history`: PASS; current tree and all reachable blobs scanned in the remote verification clone.
 - `rustup run 1.96.0-x86_64-pc-windows-msvc cargo fmt --all -- --check`: PASS.
 - `rustup run 1.96.0-x86_64-pc-windows-msvc cargo test --workspace`: PASS; 29 tests passed.
 - `cargo check --workspace` with the pinned toolchain: PASS.
