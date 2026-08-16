@@ -138,6 +138,6 @@ Before changing the verdict to `PRODUCTION_CERTIFIED`, the project needs durable
 
 ## 12. Exact commit and closeout
 
-The exact audited starting commit is `189f867a600633ce80be8b392959af0920b2c5d7`. The implementation and certification closeout commit is `d06aa73231f869ac1d5ca6cd1d59a584c250954c`. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`. The final documentation-pointer commit is reported separately after push.
+The exact audited starting commit is `189f867a600633ce80be8b392959af0920b2c5d7`. The implementation and certification closeout commit is `23bffed2b39645437ac24898d6792f9fe1b5ccd6`. The GitHub target is `github.com/dionnblake/Council-Of-Agents`, branch `main`. The final documentation-pointer commit is reported separately after push.
 
 No M1 work was started.
