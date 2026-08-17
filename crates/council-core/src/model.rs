@@ -755,4 +755,16 @@ mod tests {
             &["low"]
         );
     }
+
+    #[test]
+    fn codex_default_timeout_matches_certification_budget() {
+        let config = ProviderConfig::defaults()
+            .into_iter()
+            .find(|config| config.provider == ProviderKind::CodexWsl)
+            .expect("Codex WSL default configuration");
+
+        assert_eq!(config.model_default, "gpt-5.6-luna");
+        assert_eq!(config.reasoning_effort_default, "max");
+        assert_eq!(config.timeout_ms, 300_000);
+    }
 }

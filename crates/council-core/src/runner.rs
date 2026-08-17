@@ -197,7 +197,8 @@ impl Drop for JobHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::providers::CommandSpec;
+    use super::ProcessRunner;
+    use crate::providers::{CommandInvocation, CommandSpec};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -215,5 +216,107 @@ mod tests {
         };
         assert_eq!(spec.timeout_ms, 100);
         assert!(!spec.prompt_via_stdin);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn timeout_runs_fallback_before_joining_inherited_output_pipes() {
+        use std::fs;
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before the Unix epoch")
+            .as_nanos();
+        let base_directory = std::env::temp_dir();
+        let base_directory = if base_directory.to_string_lossy().contains(' ') {
+            PathBuf::from(r"C:\council-target")
+        } else {
+            base_directory
+        };
+        let root = base_directory.join(format!(
+            "council-runner-timeout-ordering-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create runner fixture directory");
+        let marker = root.join("fallback-released.marker");
+        let provider_script = root.join("provider.cmd");
+        let cmd_exe = std::env::var_os("ComSpec")
+            .or_else(|| std::env::var_os("COMSPEC"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("cmd.exe"));
+        let marker_for_batch = marker.to_string_lossy();
+        fs::write(
+            &provider_script,
+            format!(
+                "@echo off\r\nstart \"\" /b cmd.exe /D /C \"for /L %%I in (1,1,600) do @if exist {marker_for_batch} exit /b 0 else @ping -n 2 127.0.0.1 >nul\"\r\nping -n 600 127.0.0.1 >nul\r\n"
+            ),
+        )
+        .expect("write runner fixture script");
+
+        let specification = CommandSpec {
+            program: cmd_exe.clone(),
+            args: vec![
+                "/D".to_string(),
+                "/C".to_string(),
+                provider_script.to_string_lossy().into_owned(),
+            ],
+            environment: BTreeMap::new(),
+            working_directory: root.clone(),
+            prompt_via_stdin: false,
+            windows_job_containment: false,
+            timeout_ms: 100,
+            kill_fallback: Some(CommandInvocation {
+                program: cmd_exe,
+                args: vec![
+                    "/D".to_string(),
+                    "/C".to_string(),
+                    format!("echo fallback>{}", marker.display()),
+                ],
+            }),
+        };
+        let runner = ProcessRunner {
+            timeout_grace: Duration::from_millis(50),
+            poll_interval: Duration::from_millis(10),
+        };
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || sender.send(runner.run(&specification, "")));
+
+        let result = match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => {
+                let _ = worker.join();
+                let _ = fs::remove_dir_all(&root);
+                panic!("runner fixture failed: {error}");
+            }
+            Err(_) => {
+                // Release the inherited child so the test can clean up even if the
+                // pre-fix ordering regresses and the fallback never ran.
+                fs::write(&marker, b"test cleanup").expect("release runner fixture child");
+                let recovered = receiver
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("runner fixture should recover after cleanup marker")
+                    .expect("runner fixture returned an error after cleanup marker");
+                let _ = worker.join().expect("runner worker should exit");
+                let _ = fs::remove_dir_all(&root);
+                panic!(
+                    "runner joined output readers before its timeout fallback; recovered result: {recovered:?}"
+                );
+            }
+        };
+
+        let _ = worker.join().expect("runner worker should exit");
+        assert!(result.timed_out);
+        assert!(
+            result.cancellation_fallback_ran,
+            "timeout fallback failed; stdout={:?} stderr={:?} marker={}",
+            result.stdout,
+            result.stderr,
+            marker.display()
+        );
+        assert!(marker.exists(), "timeout fallback should create its marker");
+        fs::remove_dir_all(&root).expect("remove runner fixture directory");
     }
 }
