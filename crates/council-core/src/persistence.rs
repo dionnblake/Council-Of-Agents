@@ -1600,6 +1600,110 @@ mod tests {
     }
 
     #[test]
+    fn legacy_turn_and_artifact_rows_receive_exact_configuration_defaults() {
+        let temp = tempfile::tempdir().unwrap();
+        let database_path = temp.path().join("legacy.sqlite3");
+        {
+            let connection = Connection::open(&database_path).unwrap();
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE turns (
+                      id TEXT PRIMARY KEY,
+                      debate_id TEXT NOT NULL,
+                      round INTEGER NOT NULL,
+                      provider_slug TEXT NOT NULL,
+                      state TEXT NOT NULL,
+                      packet_hash TEXT,
+                      requested_model TEXT NOT NULL,
+                      reported_served_model TEXT,
+                      serving_identity_status TEXT NOT NULL,
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE raw_artifacts (
+                      id TEXT PRIMARY KEY,
+                      turn_id TEXT NOT NULL,
+                      stdout TEXT NOT NULL,
+                      stderr TEXT NOT NULL,
+                      exit_code INTEGER,
+                      wall_ms INTEGER,
+                      requested_model TEXT NOT NULL,
+                      packet_hash TEXT,
+                      schema_hash TEXT,
+                      failure_type TEXT,
+                      created_at TEXT NOT NULL
+                    );
+                    "#,
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&database_path).unwrap();
+        let now = Utc::now().to_rfc3339();
+        database
+            .connection
+            .execute(
+                "INSERT INTO debates (id, state, intake_json, council_size, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                params!["legacy-debate", "\"DRAFT\"", "{}", 1, now],
+            )
+            .unwrap();
+        database
+            .connection
+            .execute(
+                "INSERT INTO turns (id, debate_id, round, provider_slug, state, requested_model, serving_identity_status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                params![
+                    "legacy-turn",
+                    "legacy-debate",
+                    1,
+                    "codex-wsl",
+                    "\"PENDING\"",
+                    "gpt-5.6-luna",
+                    "\"UNKNOWN\"",
+                    Utc::now().to_rfc3339()
+                ],
+            )
+            .unwrap();
+        database
+            .connection
+            .execute(
+                "INSERT INTO raw_artifacts (id, turn_id, stdout, stderr, requested_model, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "legacy-raw",
+                    "legacy-turn",
+                    "{}",
+                    "",
+                    "gpt-5.6-luna",
+                    Utc::now().to_rfc3339()
+                ],
+            )
+            .unwrap();
+
+        let turn_defaults: (String, String, Option<String>, String) = database
+            .connection
+            .query_row(
+                "SELECT requested_reasoning_effort, exact_configuration_status, exact_configuration_evidence, certification_boundary FROM turns WHERE id = 'legacy-turn'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(turn_defaults.0, "");
+        assert_eq!(turn_defaults.1, "\"UNVERIFIED_CONFIGURATION\"");
+        assert_eq!(turn_defaults.2, None);
+        assert_eq!(turn_defaults.3, CERTIFICATION_BOUNDARY_VERSION);
+
+        let artifact_defaults: (String, String, Option<String>, String) = database
+            .connection
+            .query_row(
+                "SELECT requested_reasoning_effort, exact_configuration_status, exact_configuration_evidence, certification_boundary FROM raw_artifacts WHERE id = 'legacy-raw'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(artifact_defaults, turn_defaults);
+    }
+
+    #[test]
     fn snapshot_review_persists_across_reopen_and_binds_exact_evidence() {
         let temp = tempfile::tempdir().unwrap();
         let database_path = temp.path().join("council.sqlite3");
