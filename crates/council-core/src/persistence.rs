@@ -100,6 +100,10 @@ impl Database {
               state TEXT NOT NULL,
               packet_hash TEXT,
               requested_model TEXT NOT NULL,
+              requested_reasoning_effort TEXT NOT NULL DEFAULT '',
+              exact_configuration_status TEXT NOT NULL DEFAULT '"UNVERIFIED_CONFIGURATION"',
+              exact_configuration_evidence TEXT,
+              certification_boundary TEXT NOT NULL DEFAULT 'council-provider-boundary.v1',
               reported_served_model TEXT,
               serving_identity_status TEXT NOT NULL,
               created_at TEXT NOT NULL,
@@ -216,6 +220,10 @@ impl Database {
               exit_code INTEGER,
               wall_ms INTEGER,
               requested_model TEXT NOT NULL,
+              requested_reasoning_effort TEXT NOT NULL DEFAULT '',
+              exact_configuration_status TEXT NOT NULL DEFAULT '"UNVERIFIED_CONFIGURATION"',
+              exact_configuration_evidence TEXT,
+              certification_boundary TEXT NOT NULL DEFAULT 'council-provider-boundary.v1',
               packet_hash TEXT,
               schema_hash TEXT,
               failure_type TEXT,
@@ -286,6 +294,38 @@ impl Database {
             .execute("ALTER TABLE debates ADD COLUMN discovery_json TEXT", []);
         let _ = self.connection.execute(
             "ALTER TABLE context_packets ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE turns ADD COLUMN requested_reasoning_effort TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE turns ADD COLUMN exact_configuration_status TEXT NOT NULL DEFAULT '\"UNVERIFIED_CONFIGURATION\"'",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE turns ADD COLUMN exact_configuration_evidence TEXT",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE turns ADD COLUMN certification_boundary TEXT NOT NULL DEFAULT 'council-provider-boundary.v1'",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE raw_artifacts ADD COLUMN requested_reasoning_effort TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE raw_artifacts ADD COLUMN exact_configuration_status TEXT NOT NULL DEFAULT '\"UNVERIFIED_CONFIGURATION\"'",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE raw_artifacts ADD COLUMN exact_configuration_evidence TEXT",
+            [],
+        );
+        let _ = self.connection.execute(
+            "ALTER TABLE raw_artifacts ADD COLUMN certification_boundary TEXT NOT NULL DEFAULT 'council-provider-boundary.v1'",
             [],
         );
         let _ = self.connection.execute(
@@ -471,6 +511,8 @@ impl Database {
     ) -> Result<Vec<ProviderPosition>, DatabaseError> {
         let mut statement = self.connection.prepare(
             "SELECT t.provider_slug, t.round, t.id, t.requested_model,
+                    t.requested_reasoning_effort, t.exact_configuration_status,
+                    t.exact_configuration_evidence, t.certification_boundary,
                     t.reported_served_model, t.serving_identity_status,
                     p.id, p.position_json,
                     COALESCE((SELECT ra.id FROM raw_artifacts ra
@@ -487,11 +529,15 @@ impl Database {
                 row.get::<_, u8>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, Option<String>>(6)?,
                 row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, i64>(10)?,
+                row.get::<_, String>(11)?,
+                row.get::<_, String>(12)?,
             ))
         })?;
         let mut latest = std::collections::BTreeMap::<ProviderKind, ProviderPosition>::new();
@@ -501,6 +547,10 @@ impl Database {
                 round,
                 turn_id,
                 requested_model,
+                requested_reasoning_effort,
+                exact_configuration_status,
+                exact_configuration_evidence,
+                certification_boundary,
                 reported_served_model,
                 serving_identity_status,
                 _position_id,
@@ -517,8 +567,12 @@ impl Database {
                 position: serde_json::from_str(&position_json)?,
                 raw_artifact_id,
                 requested_model,
+                requested_reasoning_effort,
                 reported_served_model,
                 serving_identity_status: serde_json::from_str(&serving_identity_status)?,
+                exact_configuration_status: serde_json::from_str(&exact_configuration_status)?,
+                exact_configuration_evidence,
+                certification_boundary,
             };
             latest.insert(provider, candidate);
         }
@@ -531,6 +585,8 @@ impl Database {
     ) -> Result<Vec<ProviderPosition>, DatabaseError> {
         let mut statement = self.connection.prepare(
             "SELECT t.provider_slug, t.round, t.id, t.requested_model,
+                    t.requested_reasoning_effort, t.exact_configuration_status,
+                    t.exact_configuration_evidence, t.certification_boundary,
                     t.reported_served_model, t.serving_identity_status,
                     p.position_json,
                     COALESCE((SELECT ra.id FROM raw_artifacts ra
@@ -547,10 +603,14 @@ impl Database {
                 row.get::<_, u8>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(6)?,
                 row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
             ))
         })?;
         let rows = rows.collect::<Result<Vec<_>, _>>()?;
@@ -561,6 +621,10 @@ impl Database {
                     round,
                     turn_id,
                     requested_model,
+                    requested_reasoning_effort,
+                    exact_configuration_status,
+                    exact_configuration_evidence,
+                    certification_boundary,
                     reported_served_model,
                     serving_identity_status,
                     position_json,
@@ -575,8 +639,14 @@ impl Database {
                         position: serde_json::from_str(&position_json)?,
                         raw_artifact_id,
                         requested_model,
+                        requested_reasoning_effort,
                         reported_served_model,
                         serving_identity_status: serde_json::from_str(&serving_identity_status)?,
+                        exact_configuration_status: serde_json::from_str(
+                            &exact_configuration_status,
+                        )?,
+                        exact_configuration_evidence,
+                        certification_boundary,
                     })
                 },
             )
@@ -713,8 +783,13 @@ impl Database {
         state: TurnState,
         packet_hash: Option<&str>,
     ) -> Result<(), DatabaseError> {
+        let selection = ModelSelection::requested_with_effort_for(
+            &provider.provider,
+            provider.model_default.clone(),
+            provider.reasoning_effort_default.clone(),
+        );
         self.connection.execute(
-            "INSERT INTO turns (id, debate_id, round, provider_slug, state, packet_hash, requested_model, reported_served_model, serving_identity_status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?9)",
+            "INSERT INTO turns (id, debate_id, round, provider_slug, state, packet_hash, requested_model, requested_reasoning_effort, exact_configuration_status, exact_configuration_evidence, certification_boundary, reported_served_model, serving_identity_status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, ?12, ?13, ?13)",
             params![
                 turn_id,
                 debate_id,
@@ -722,7 +797,11 @@ impl Database {
                 provider.provider.slug(),
                 serde_json::to_string(&state)?,
                 packet_hash,
-                provider.model_default,
+                selection.requested_model,
+                selection.reasoning_effort.unwrap_or_default(),
+                serde_json::to_string(&selection.exact_configuration_status)?,
+                selection.exact_configuration_evidence,
+                selection.certification_boundary,
                 serde_json::to_string(&ServingIdentityStatus::Unknown)?,
                 Utc::now().to_rfc3339()
             ],
@@ -872,7 +951,7 @@ impl Database {
         schema_hash: Option<&str>,
     ) -> Result<(), DatabaseError> {
         self.connection.execute(
-            "INSERT INTO raw_artifacts (id, turn_id, stdout, stderr, exit_code, wall_ms, requested_model, packet_hash, schema_hash, failure_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO raw_artifacts (id, turn_id, stdout, stderr, exit_code, wall_ms, requested_model, requested_reasoning_effort, exact_configuration_status, exact_configuration_evidence, certification_boundary, packet_hash, schema_hash, failure_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 result.raw_artifact_id,
                 turn_id,
@@ -881,6 +960,10 @@ impl Database {
                 result.exit_code,
                 result.wall_ms as i64,
                 result.requested_model,
+                result.requested_reasoning_effort,
+                serde_json::to_string(&result.exact_configuration_status)?,
+                result.exact_configuration_evidence,
+                result.certification_boundary,
                 packet_hash,
                 schema_hash,
                 result.failure_type.as_ref().map(serde_json::to_string).transpose()?,
@@ -1481,8 +1564,9 @@ fn deserialize_debate_row(
 mod tests {
     use super::*;
     use crate::model::{
-        Claim, Commitment, Debate, Intake, ModelSelection, PeerResponse,
-        PeerResponseClassification, Position, ProviderKind, Reversibility,
+        CERTIFICATION_BOUNDARY_VERSION, Claim, Commitment, Debate, ExactConfigurationStatus,
+        Intake, ModelSelection, PeerResponse, PeerResponseClassification, Position, ProviderKind,
+        Reversibility,
     };
     use crate::snapshot::{
         SnapshotBuilder, SnapshotRequest, SnapshotReviewDecision,
@@ -1675,8 +1759,14 @@ mod tests {
             },
             raw_artifact_id: "raw-1".to_string(),
             requested_model: "gpt-5.6-luna".to_string(),
+            requested_reasoning_effort: "max".to_string(),
             reported_served_model: None,
             serving_identity_status: ServingIdentityStatus::ProviderDoesNotReport,
+            exact_configuration_status: ExactConfigurationStatus::UnverifiedConfiguration,
+            exact_configuration_evidence: Some(
+                "test configuration is intentionally unverified".to_string(),
+            ),
+            certification_boundary: CERTIFICATION_BOUNDARY_VERSION.to_string(),
         };
         database.save_provider_position(&position).unwrap();
         let stored_reference: String = database
@@ -1695,6 +1785,16 @@ mod tests {
             position.position.recommendation
         );
         assert_eq!(loaded[0].round, 3);
+        assert_eq!(loaded[0].requested_model, "gpt-5.6-luna");
+        assert_eq!(loaded[0].requested_reasoning_effort, "max");
+        assert_eq!(
+            loaded[0].exact_configuration_status,
+            ExactConfigurationStatus::UnverifiedConfiguration
+        );
+        assert_eq!(
+            loaded[0].certification_boundary,
+            CERTIFICATION_BOUNDARY_VERSION
+        );
     }
 
     #[test]

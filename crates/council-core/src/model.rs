@@ -118,6 +118,38 @@ pub enum CertificationStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExactConfigurationStatus {
+    Certified,
+    PassWithDeclaredLimitation,
+    UnverifiedConfiguration,
+    Blocked,
+    Disabled,
+}
+
+impl Default for ExactConfigurationStatus {
+    fn default() -> Self {
+        Self::UnverifiedConfiguration
+    }
+}
+
+pub const CERTIFICATION_BOUNDARY_VERSION: &str = "council-provider-boundary.v1";
+
+pub fn exact_configuration_certification(
+    _provider: &ProviderKind,
+    _model: &str,
+    _reasoning_effort: &str,
+) -> (ExactConfigurationStatus, Option<String>) {
+    (
+        ExactConfigurationStatus::UnverifiedConfiguration,
+        Some(
+            "No exact provider/model/reasoning-level certification record is registered"
+                .to_string(),
+        ),
+    )
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ServingIdentityStatus {
     VerifiedMatch,
     VerifiedMismatch,
@@ -238,15 +270,31 @@ pub struct ModelSelection {
     pub reasoning_effort: Option<String>,
     pub reported_served_model: Option<String>,
     pub serving_identity_status: ServingIdentityStatus,
+    #[serde(default)]
+    pub exact_configuration_status: ExactConfigurationStatus,
+    #[serde(default)]
+    pub exact_configuration_evidence: Option<String>,
+    #[serde(default = "default_certification_boundary")]
+    pub certification_boundary: String,
 }
 
 impl ModelSelection {
     pub fn requested(model: impl Into<String>) -> Self {
+        Self::requested_for(&ProviderKind::Claude, model)
+    }
+
+    pub fn requested_for(provider: &ProviderKind, model: impl Into<String>) -> Self {
+        let requested_model = model.into();
+        let (exact_configuration_status, exact_configuration_evidence) =
+            exact_configuration_certification(provider, &requested_model, "");
         Self {
-            requested_model: model.into(),
+            requested_model,
             reasoning_effort: None,
             reported_served_model: None,
             serving_identity_status: ServingIdentityStatus::Unknown,
+            exact_configuration_status,
+            exact_configuration_evidence,
+            certification_boundary: default_certification_boundary(),
         }
     }
 
@@ -254,13 +302,32 @@ impl ModelSelection {
         model: impl Into<String>,
         reasoning_effort: impl Into<String>,
     ) -> Self {
+        Self::requested_with_effort_for(&ProviderKind::Claude, model, reasoning_effort)
+    }
+
+    pub fn requested_with_effort_for(
+        provider: &ProviderKind,
+        model: impl Into<String>,
+        reasoning_effort: impl Into<String>,
+    ) -> Self {
+        let requested_model = model.into();
+        let reasoning_effort = reasoning_effort.into();
+        let (exact_configuration_status, exact_configuration_evidence) =
+            exact_configuration_certification(provider, &requested_model, &reasoning_effort);
         Self {
-            requested_model: model.into(),
-            reasoning_effort: Some(reasoning_effort.into()),
+            requested_model,
+            reasoning_effort: Some(reasoning_effort),
             reported_served_model: None,
             serving_identity_status: ServingIdentityStatus::Unknown,
+            exact_configuration_status,
+            exact_configuration_evidence,
+            certification_boundary: default_certification_boundary(),
         }
     }
+}
+
+fn default_certification_boundary() -> String {
+    CERTIFICATION_BOUNDARY_VERSION.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -539,8 +606,16 @@ pub struct ProviderPosition {
     pub position: Position,
     pub raw_artifact_id: String,
     pub requested_model: String,
+    #[serde(default)]
+    pub requested_reasoning_effort: String,
     pub reported_served_model: Option<String>,
     pub serving_identity_status: ServingIdentityStatus,
+    #[serde(default)]
+    pub exact_configuration_status: ExactConfigurationStatus,
+    #[serde(default)]
+    pub exact_configuration_evidence: Option<String>,
+    #[serde(default = "default_certification_boundary")]
+    pub certification_boundary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -591,4 +666,49 @@ pub struct EvaluationMetrics {
     pub decision_changed: Option<bool>,
     pub new_considerations: u32,
     pub independent_only: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_configuration_defaults_fail_closed_without_exact_evidence() {
+        let cases = [
+            (ProviderKind::Claude, "claude-haiku-4-5-20251001", "high"),
+            (ProviderKind::Claude, "sonnet", "high"),
+            (ProviderKind::CodexWsl, "gpt-5.6-luna", "max"),
+            (ProviderKind::CodexWsl, "gpt-5.6-terra", "ultra"),
+        ];
+
+        for (provider, model, effort) in cases {
+            let (status, evidence) = exact_configuration_certification(&provider, model, effort);
+            assert_eq!(status, ExactConfigurationStatus::UnverifiedConfiguration);
+            assert!(
+                evidence
+                    .as_deref()
+                    .is_some_and(|value| value.contains("No exact provider/model"))
+            );
+        }
+    }
+
+    #[test]
+    fn model_selection_persists_requested_provider_model_effort_and_boundary() {
+        let selection = ModelSelection::requested_with_effort_for(
+            &ProviderKind::CodexWsl,
+            "gpt-5.6-luna",
+            "max",
+        );
+
+        assert_eq!(selection.requested_model, "gpt-5.6-luna");
+        assert_eq!(selection.reasoning_effort.as_deref(), Some("max"));
+        assert_eq!(
+            selection.exact_configuration_status,
+            ExactConfigurationStatus::UnverifiedConfiguration
+        );
+        assert_eq!(
+            selection.certification_boundary,
+            CERTIFICATION_BOUNDARY_VERSION
+        );
+    }
 }

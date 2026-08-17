@@ -9,6 +9,9 @@ type ProviderStatus = {
   label: string;
   model: string;
   certification: string;
+  exact_configuration_status: string;
+  exact_configuration_evidence: string | null;
+  certification_boundary: string;
   state: SeatState;
   detail: string;
   requested: string;
@@ -173,8 +176,12 @@ type TurnSummary = {
   attempts: number;
   failure_type: string | null;
   requested_model: string;
+  requested_reasoning_effort: string;
   reported_served_model: string | null;
   serving_identity_status: string;
+  exact_configuration_status: string;
+  exact_configuration_evidence: string | null;
+  certification_boundary: string;
 };
 
 type RunRoundSummary = {
@@ -201,8 +208,12 @@ type StoredPosition = {
   provider: string;
   round: number;
   requested_model: string;
+  requested_reasoning_effort: string;
   reported_served_model: string | null;
   serving_identity_status: string;
+  exact_configuration_status: string;
+  exact_configuration_evidence: string | null;
+  certification_boundary: string;
   position: {
     recommendation: string;
     commitment: string;
@@ -256,6 +267,9 @@ const fallbackProviders: ProviderStatus[] = [
     label: "Claude Code",
     model: "claude-haiku-4-5-20251001",
     certification: "PASS",
+    exact_configuration_status: "UNVERIFIED_CONFIGURATION",
+    exact_configuration_evidence: "No exact provider/model/reasoning-level certification record is registered",
+    certification_boundary: "council-provider-boundary.v1",
     state: "READY",
     detail: "Dedicated local config",
     requested: "claude-haiku-4-5-20251001",
@@ -267,6 +281,9 @@ const fallbackProviders: ProviderStatus[] = [
     label: "Antigravity CLI",
     model: "gemini-3.7-flash-low",
     certification: "PASS_WITH_DECLARED_LIMITATION",
+    exact_configuration_status: "UNVERIFIED_CONFIGURATION",
+    exact_configuration_evidence: "No exact provider/model/reasoning-level certification record is registered",
+    certification_boundary: "council-provider-boundary.v1",
     state: "LIMITED",
     detail: "Served identity not reported",
     requested: "gemini-3.7-flash-low",
@@ -278,6 +295,9 @@ const fallbackProviders: ProviderStatus[] = [
     label: "Codex WSL",
     model: "gpt-5.6-luna",
     certification: "PASS_WITH_DECLARED_LIMITATION",
+    exact_configuration_status: "UNVERIFIED_CONFIGURATION",
+    exact_configuration_evidence: "No exact provider/model/reasoning-level certification record is registered",
+    certification_boundary: "council-provider-boundary.v1",
     state: "READY",
     detail: "CouncilCodexWSL boundary",
     requested: "gpt-5.6-luna",
@@ -780,7 +800,7 @@ function HomeScreen({ providers, setScreen, debate, recentDebates, openDebate }:
 }
 
 function ProviderCard({ provider }: { provider: ProviderStatus }) {
-  return <article className="provider-card"><div className="provider-head"><div className={`provider-glyph glyph-${provider.provider.toLowerCase()}`}>{provider.provider === "CLAUDE" ? "C" : provider.provider === "ANTIGRAVITY" ? "A" : "✦"}</div><div className="provider-name"><strong>{provider.label}</strong><span>{provider.model}</span></div><span className={`state-badge ${statusClass(provider.state)}`}><i />{provider.state.replace("_", " ")}</span></div><div className="provider-rule" /><div className="provider-meta"><span>REQUESTED</span><strong>{provider.requested}</strong></div><div className="provider-meta"><span>SERVED IDENTITY</span><strong className={provider.served === "VERIFIED_MATCH" ? "green-text" : "amber-text"}>{provider.served.replaceAll("_", " ")}</strong></div><div className="provider-meta"><span>AUTH</span><strong className={provider.auth === "CHATGPT_SUBSCRIPTION" ? "green-text" : "amber-text"}>{provider.auth.replaceAll("_", " ")}</strong></div><div className="provider-foot"><span className="cert-stamp">{provider.certification.replaceAll("_", " ")}</span><span className="provider-detail">{provider.detail}</span></div></article>;
+  return <article className="provider-card"><div className="provider-head"><div className={`provider-glyph glyph-${provider.provider.toLowerCase()}`}>{provider.provider === "CLAUDE" ? "C" : provider.provider === "ANTIGRAVITY" ? "A" : "✦"}</div><div className="provider-name"><strong>{provider.label}</strong><span>{provider.model}</span></div><span className={`state-badge ${statusClass(provider.state)}`}><i />{provider.state.replace("_", " ")}</span></div><div className="provider-rule" /><div className="provider-meta"><span>REQUESTED</span><strong>{provider.requested}</strong></div><div className="provider-meta"><span>SERVED IDENTITY</span><strong className={provider.served === "VERIFIED_MATCH" ? "green-text" : "amber-text"}>{provider.served.replaceAll("_", " ")}</strong></div><div className="provider-meta"><span>PROVIDER BOUNDARY</span><strong>{provider.certification.replaceAll("_", " ")}</strong></div><div className="provider-meta"><span>EXACT CONFIGURATION</span><strong className={provider.exact_configuration_status === "CERTIFIED" ? "green-text" : "amber-text"}>{provider.exact_configuration_status.replaceAll("_", " ")}</strong></div><div className="provider-meta"><span>AUTH</span><strong className={provider.auth === "CHATGPT_SUBSCRIPTION" ? "green-text" : "amber-text"}>{provider.auth.replaceAll("_", " ")}</strong></div><div className="provider-foot"><span className="cert-stamp">{provider.certification_boundary}</span><span className="provider-detail">{provider.exact_configuration_evidence ?? provider.detail}</span></div></article>;
 }
 
 function NewDebateScreen(props: { question: string; setQuestion: (value: string) => void; mode: string; setMode: (value: string) => void; productType: string; setProductType: (value: string) => void; decisionType: string; setDecisionType: (value: string) => void; priority: string; setPriority: (value: string) => void; constraints: string; setConstraints: (value: string) => void; startDebate: () => void }) {
@@ -949,7 +969,7 @@ function LiveDebateScreen(props: {
             const turn = props.runSummary?.turns.find((item) => item.provider === provider.provider || item.provider === provider.provider.replace("_", "-"));
             const state = turn?.state ?? "PENDING";
             const detail = turn ? (turn.failure_type ?? (turn.serving_identity_status === "PROVIDER_DOES_NOT_REPORT" ? "served identity not reported" : "fresh process complete")) : "fresh process · awaiting dispatch";
-            return <div className={"turn-row " + (turn ? "turn-active" : "")} key={provider.provider}><div className={"turn-number " + (turn ? "on" : "")}>0{index + 1}</div><div className="turn-provider"><strong>{provider.label}</strong><span>{turn?.requested_model ?? provider.model}</span></div><div className="turn-state"><span className={"state-badge " + badgeClass(state)}><i />{state.replaceAll("_", " ")}</span><small>{detail}</small></div><div className="turn-chevron">{turn ? "✓" : "·"}</div></div>;
+            return <div className={"turn-row " + (turn ? "turn-active" : "")} key={provider.provider}><div className={"turn-number " + (turn ? "on" : "")}>0{index + 1}</div><div className="turn-provider"><strong>{provider.label}</strong><span>{turn?.requested_model ?? provider.model}{turn?.requested_reasoning_effort ? ` · ${turn.requested_reasoning_effort}` : ""}</span><small>EXACT: {(turn?.exact_configuration_status ?? provider.exact_configuration_status).replaceAll("_", " ")}</small></div><div className="turn-state"><span className={"state-badge " + badgeClass(state)}><i />{state.replaceAll("_", " ")}</span><small>{detail}</small></div><div className="turn-chevron">{turn ? "✓" : "·"}</div></div>;
           })}
         </div>
         <aside className="packet-panel">
@@ -962,7 +982,7 @@ function LiveDebateScreen(props: {
       </div>
       {props.discovery ? <div className="positions-strip discovery-strip"><div className="panel-heading"><div><span className="section-kicker">R0 / BOUNDED CANDIDATE UNION</span><h2>Review before independent opening</h2></div><span className="count-badge">{props.discovery.candidates.length} CANDIDATES</span></div><div className="candidate-grid">{props.discovery.candidates.map((candidate) => <article className="candidate-card" key={candidate.id}><strong>{candidate.label}</strong><span>{candidate.status_quo ? "STATUS QUO" : candidate.source}</span><p>{candidate.justifications[0] ?? "Controller-bounded candidate."}</p></article>)}</div></div> : null}
       {(props.debate?.state === "PAUSED" || (props.debate?.state === "DRAFT" && props.providers.some((provider) => provider.state === "NOT_READY"))) ? <div className="run-note degraded-note"><strong>Seat availability requires a human choice.</strong><span>Retry when ready, cancel, or explicitly continue with at least two seats.</span><div className="form-actions"><button className="outline-button" onClick={props.resumeDebate}>Retry later / resume</button><button className="secondary-button" onClick={props.cancelDebate}>Cancel debate</button></div><textarea className="text-input" value={props.degradedRationale} onChange={(event) => props.setDegradedRationale(event.target.value)} placeholder="Why is a degraded council acceptable for this decision?" rows={2} /><button className="outline-button" onClick={props.proceedDegraded}>Proceed with selected seats</button></div> : null}
-      {props.positions.length > 0 ? <div className="positions-strip"><div className="panel-heading"><div><span className="section-kicker">STORED POSITIONS</span><h2>Recommendations and risks</h2></div><span className="count-badge">{props.positions.length} PROVIDERS</span></div><div className="position-cards">{props.positions.map((position) => <article className="position-card" key={position.provider}><div className="position-card-top"><strong>{position.provider.replace("-", " ").toUpperCase()}</strong><span>{position.position.commitment.replaceAll("_", " ")}</span></div><h3>{position.position.recommendation}</h3><p>{position.position.risks[0] ?? "No risk recorded."}</p><small>{position.position.flip_condition}</small></article>)}</div></div> : null}
+      {props.positions.length > 0 ? <div className="positions-strip"><div className="panel-heading"><div><span className="section-kicker">STORED POSITIONS</span><h2>Recommendations and risks</h2></div><span className="count-badge">{props.positions.length} PROVIDERS</span></div><div className="position-cards">{props.positions.map((position) => <article className="position-card" key={position.provider}><div className="position-card-top"><strong>{position.provider.replace("-", " ").toUpperCase()}</strong><span>{position.position.commitment.replaceAll("_", " ")}</span></div><h3>{position.position.recommendation}</h3><p>{position.position.risks[0] ?? "No risk recorded."}</p><small>{position.position.flip_condition}</small><small>MODEL: {position.requested_model} · {position.requested_reasoning_effort || "level not reported"}</small><small>EXACT CONFIG: {position.exact_configuration_status.replaceAll("_", " ")}</small></article>)}</div></div> : null}
       {props.runSummary ? <div className="run-note"><strong>{props.runSummary.message}</strong><span>round {props.runSummary.round} · {props.runSummary.valid_positions} usable positions · schema {props.runSummary.evaluation.schema_success_percent}% · citations {props.runSummary.evaluation.citation_validity} · state {props.runSummary.state}</span></div> : null}
     </section>
   );

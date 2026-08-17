@@ -2,8 +2,9 @@
 
 use council_core::bridge::{LinuxManifestFile, verify_bridge_manifests};
 use council_core::{
-    ContextPacket, CouncilOrchestrator, Database, Debate, DebateEvent, DebateState, DecisionRecord,
-    EvaluationMetrics, EvidenceIndex, FailureType, HumanDecision, HumanDecisionKind, Intake,
+    CERTIFICATION_BOUNDARY_VERSION, ContextPacket, CouncilOrchestrator, Database, Debate,
+    DebateEvent, DebateState, DecisionRecord, EvaluationMetrics, EvidenceIndex,
+    ExactConfigurationStatus, FailureType, HumanDecision, HumanDecisionKind, Intake,
     LiveProviderExecutor, ModelSelection, POSITION_SCHEMA_VERSION, ProviderCallRequest,
     ProviderConfig, ProviderKind, ProviderPosition, ProviderRegistry, RoundRequest,
     ServingIdentityStatus, SnapshotBuilder, SnapshotManifest, SnapshotRequest,
@@ -28,6 +29,9 @@ struct ProviderStatus {
     label: String,
     model: String,
     certification: String,
+    exact_configuration_status: ExactConfigurationStatus,
+    exact_configuration_evidence: Option<String>,
+    certification_boundary: String,
     state: String,
     detail: String,
     requested: String,
@@ -77,8 +81,12 @@ struct TurnSummary {
     attempts: usize,
     failure_type: Option<FailureType>,
     requested_model: String,
+    requested_reasoning_effort: String,
     reported_served_model: Option<String>,
     serving_identity_status: ServingIdentityStatus,
+    exact_configuration_status: ExactConfigurationStatus,
+    exact_configuration_evidence: Option<String>,
+    certification_boundary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,6 +279,11 @@ fn antigravity_guard_ready(config: &ProviderConfig) -> bool {
 }
 
 fn provider_status(config: &ProviderConfig, registry: &ProviderRegistry) -> ProviderStatus {
+    let exact_configuration = ModelSelection::requested_with_effort_for(
+        &config.provider,
+        config.model_default.clone(),
+        config.reasoning_effort_default.clone(),
+    );
     let (state, detail) = match config.provider {
         ProviderKind::Claude => {
             let executable = program_available(&config.executable);
@@ -332,6 +345,9 @@ fn provider_status(config: &ProviderConfig, registry: &ProviderRegistry) -> Prov
         label: config.provider.display_name().to_string(),
         model: config.model_default.clone(),
         certification: certification_label(config),
+        exact_configuration_status: exact_configuration.exact_configuration_status,
+        exact_configuration_evidence: exact_configuration.exact_configuration_evidence,
+        certification_boundary: exact_configuration.certification_boundary,
         state: if routing_detail.is_some() {
             "NOT_READY".to_string()
         } else {
@@ -1376,8 +1392,12 @@ fn create_debate(
             )
             .map_err(|error| error.to_string())?;
             Ok((
-                config.provider,
-                ModelSelection::requested_with_effort(requested_model, reasoning_effort),
+                config.provider.clone(),
+                ModelSelection::requested_with_effort_for(
+                    &config.provider,
+                    requested_model,
+                    reasoning_effort,
+                ),
             ))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
@@ -2296,18 +2316,18 @@ fn run_discovery_round(
         .turns
         .iter()
         .map(|turn| {
-            let (reported_served_model, serving_identity_status) = turn
+            let raw_result = turn
                 .attempts
                 .iter()
                 .rev()
-                .find_map(|attempt| attempt.raw_result.as_ref())
-                .map(|result| {
-                    (
-                        result.reported_served_model.clone(),
-                        result.serving_identity_status.clone(),
-                    )
-                })
-                .unwrap_or((None, ServingIdentityStatus::Unknown));
+                .find_map(|attempt| attempt.raw_result.as_ref());
+            let configured_selection = provider_configs.get(&turn.provider).map(|config| {
+                ModelSelection::requested_with_effort_for(
+                    &config.provider,
+                    config.model_default.clone(),
+                    config.reasoning_effort_default.clone(),
+                )
+            });
             TurnSummary {
                 provider: turn.provider.clone(),
                 state: turn.state.clone(),
@@ -2317,12 +2337,50 @@ fn run_discovery_round(
                     .iter()
                     .rev()
                     .find_map(|attempt| attempt.failure_type.clone()),
-                requested_model: provider_configs
-                    .get(&turn.provider)
-                    .map(|config| config.model_default.clone())
+                requested_model: raw_result
+                    .map(|result| result.requested_model.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .map(|selection| selection.requested_model.clone())
+                    })
                     .unwrap_or_default(),
-                reported_served_model,
-                serving_identity_status,
+                requested_reasoning_effort: raw_result
+                    .map(|result| result.requested_reasoning_effort.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .and_then(|selection| selection.reasoning_effort.clone())
+                    })
+                    .unwrap_or_default(),
+                reported_served_model: raw_result
+                    .and_then(|result| result.reported_served_model.clone()),
+                serving_identity_status: raw_result
+                    .map(|result| result.serving_identity_status.clone())
+                    .unwrap_or(ServingIdentityStatus::Unknown),
+                exact_configuration_status: raw_result
+                    .map(|result| result.exact_configuration_status.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .map(|selection| selection.exact_configuration_status.clone())
+                    })
+                    .unwrap_or(ExactConfigurationStatus::UnverifiedConfiguration),
+                exact_configuration_evidence: raw_result
+                    .and_then(|result| result.exact_configuration_evidence.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .and_then(|selection| selection.exact_configuration_evidence.clone())
+                    }),
+                certification_boundary: raw_result
+                    .map(|result| result.certification_boundary.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .map(|selection| selection.certification_boundary.clone())
+                    })
+                    .unwrap_or_else(|| CERTIFICATION_BOUNDARY_VERSION.to_string()),
             }
         })
         .collect::<Vec<_>>();
@@ -3192,22 +3250,18 @@ fn run_round(
         .turns
         .iter()
         .map(|turn| {
-            let requested_model = provider_configs
-                .get(&turn.provider)
-                .map(|config| config.model_default.clone())
-                .unwrap_or_default();
-            let (reported_served_model, serving_identity_status) = turn
+            let raw_result = turn
                 .attempts
                 .iter()
                 .rev()
-                .find_map(|attempt| attempt.raw_result.as_ref())
-                .map(|result| {
-                    (
-                        result.reported_served_model.clone(),
-                        result.serving_identity_status.clone(),
-                    )
-                })
-                .unwrap_or((None, ServingIdentityStatus::Unknown));
+                .find_map(|attempt| attempt.raw_result.as_ref());
+            let configured_selection = provider_configs.get(&turn.provider).map(|config| {
+                ModelSelection::requested_with_effort_for(
+                    &config.provider,
+                    config.model_default.clone(),
+                    config.reasoning_effort_default.clone(),
+                )
+            });
             TurnSummary {
                 provider: turn.provider.clone(),
                 state: turn.state.clone(),
@@ -3217,9 +3271,50 @@ fn run_round(
                     .iter()
                     .rev()
                     .find_map(|attempt| attempt.failure_type.clone()),
-                requested_model,
-                reported_served_model,
-                serving_identity_status,
+                requested_model: raw_result
+                    .map(|result| result.requested_model.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .map(|selection| selection.requested_model.clone())
+                    })
+                    .unwrap_or_default(),
+                requested_reasoning_effort: raw_result
+                    .map(|result| result.requested_reasoning_effort.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .and_then(|selection| selection.reasoning_effort.clone())
+                    })
+                    .unwrap_or_default(),
+                reported_served_model: raw_result
+                    .and_then(|result| result.reported_served_model.clone()),
+                serving_identity_status: raw_result
+                    .map(|result| result.serving_identity_status.clone())
+                    .unwrap_or(ServingIdentityStatus::Unknown),
+                exact_configuration_status: raw_result
+                    .map(|result| result.exact_configuration_status.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .map(|selection| selection.exact_configuration_status.clone())
+                    })
+                    .unwrap_or(ExactConfigurationStatus::UnverifiedConfiguration),
+                exact_configuration_evidence: raw_result
+                    .and_then(|result| result.exact_configuration_evidence.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .and_then(|selection| selection.exact_configuration_evidence.clone())
+                    }),
+                certification_boundary: raw_result
+                    .map(|result| result.certification_boundary.clone())
+                    .or_else(|| {
+                        configured_selection
+                            .as_ref()
+                            .map(|selection| selection.certification_boundary.clone())
+                    })
+                    .unwrap_or_else(|| CERTIFICATION_BOUNDARY_VERSION.to_string()),
             }
         })
         .collect::<Vec<_>>();

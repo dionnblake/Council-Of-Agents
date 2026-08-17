@@ -75,6 +75,9 @@ test("provider limitations and requested/served status remain visible", () => {
   assert.match(liveDecisionScreen, /REQUESTED \/ SERVED STATUS VISIBLE/);
   assert.match(appSource, /No provider state is hidden/);
   assert.match(appSource, /certification/i);
+  assert.match(appSource, /EXACT CONFIGURATION/);
+  assert.match(appSource, /UNVERIFIED_CONFIGURATION/);
+  assert.match(appSource, /certification_boundary/);
 });
 
 test("model controls expose provider-specific dropdown choices", () => {

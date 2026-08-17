@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::model::{
-    FailureType, ProviderConfig, ProviderKind, ServingIdentityStatus,
-    supported_reasoning_efforts_for_model,
+    CERTIFICATION_BOUNDARY_VERSION, ExactConfigurationStatus, FailureType, ProviderConfig,
+    ProviderKind, ServingIdentityStatus, supported_reasoning_efforts_for_model,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,12 +64,24 @@ pub struct ProviderCallResult {
     pub stdout: String,
     pub stderr: String,
     pub requested_model: String,
+    #[serde(default)]
+    pub requested_reasoning_effort: String,
     pub reported_served_model: Option<String>,
     pub serving_identity_status: ServingIdentityStatus,
+    #[serde(default)]
+    pub exact_configuration_status: ExactConfigurationStatus,
+    #[serde(default)]
+    pub exact_configuration_evidence: Option<String>,
+    #[serde(default = "default_certification_boundary")]
+    pub certification_boundary: String,
     pub failure_type: Option<FailureType>,
     pub raw_artifact_id: String,
     pub timed_out: bool,
     pub cancellation_fallback_ran: bool,
+}
+
+fn default_certification_boundary() -> String {
+    CERTIFICATION_BOUNDARY_VERSION.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

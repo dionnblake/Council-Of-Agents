@@ -1,5 +1,8 @@
 use crate::discovery::{DiscoveryProposal, extract_discovery_nominations};
-use crate::model::{FailureType, ProviderKind, ProviderPosition, TurnState, new_id};
+use crate::model::{
+    CERTIFICATION_BOUNDARY_VERSION, FailureType, ProviderKind, ProviderPosition, TurnState,
+    exact_configuration_certification, new_id,
+};
 use crate::providers::{
     CommandSpec, ProviderCallRequest, ProviderCallResult, ProviderError, ProviderRegistry,
     RepairPolicy, classify_failure, ensure_subscription_environment, repair_policy_for,
@@ -39,6 +42,12 @@ impl ProviderExecutor for LiveProviderExecutor {
             .map_err(|error| ProviderError::ProcessRunner(error.to_string()))?;
         let (reported_served_model, serving_identity_status) =
             crate::providers::serving_identity_from_jsonl(&result.stdout, &request.model);
+        let (exact_configuration_status, exact_configuration_evidence) =
+            exact_configuration_certification(
+                &request.provider,
+                &request.model,
+                &request.reasoning_effort,
+            );
         let failure_type = if result.timed_out {
             Some(FailureType::Timeout)
         } else {
@@ -51,8 +60,12 @@ impl ProviderExecutor for LiveProviderExecutor {
             stdout: result.stdout,
             stderr: result.stderr,
             requested_model: request.model.clone(),
+            requested_reasoning_effort: request.reasoning_effort.clone(),
             reported_served_model,
             serving_identity_status,
+            exact_configuration_status,
+            exact_configuration_evidence,
+            certification_boundary: CERTIFICATION_BOUNDARY_VERSION.to_string(),
             failure_type,
             raw_artifact_id: new_id("raw"),
             timed_out: result.timed_out,
@@ -307,8 +320,12 @@ impl<E: ProviderExecutor> CouncilOrchestrator<E> {
                     position,
                     raw_artifact_id: raw_result.raw_artifact_id.clone(),
                     requested_model: raw_result.requested_model.clone(),
+                    requested_reasoning_effort: raw_result.requested_reasoning_effort.clone(),
                     reported_served_model: raw_result.reported_served_model.clone(),
                     serving_identity_status: raw_result.serving_identity_status.clone(),
+                    exact_configuration_status: raw_result.exact_configuration_status.clone(),
+                    exact_configuration_evidence: raw_result.exact_configuration_evidence.clone(),
+                    certification_boundary: raw_result.certification_boundary.clone(),
                 };
                 attempts.push(AttemptRecord {
                     attempt_number,
@@ -451,8 +468,15 @@ mod tests {
                 stdout,
                 stderr: String::new(),
                 requested_model: request.model.clone(),
+                requested_reasoning_effort: request.reasoning_effort.clone(),
                 reported_served_model: Some(request.model.clone()),
                 serving_identity_status: ServingIdentityStatus::VerifiedMatch,
+                exact_configuration_status:
+                    crate::model::ExactConfigurationStatus::UnverifiedConfiguration,
+                exact_configuration_evidence: Some(
+                    "fake executor test result; not certification evidence".to_string(),
+                ),
+                certification_boundary: CERTIFICATION_BOUNDARY_VERSION.to_string(),
                 failure_type: None,
                 raw_artifact_id: new_id("raw"),
                 timed_out: false,
