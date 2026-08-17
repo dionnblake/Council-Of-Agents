@@ -6,5 +6,6 @@ Own typed IPC commands and desktop process integration.
 - Never accept raw shell commands from the React layer.
 - Keep filesystem and provider execution under explicit controller policy.
 - Persist provider-specific model level defaults and forward per-debate level overrides through typed IPC to council-core.
+- Expose persisted latest-round turn statuses through typed IPC so reloads show failed, valid, and pending seats instead of reconstructing every seat as pending.
 - Expose snapshot review through typed IPC only. Review responses may contain exclusion paths, reasons, and hashes, but never excluded file contents or user-entered free-form rationale. Provider dispatch must remain blocked until the exact persisted review is approved.
 - Verify with cargo check -p council-desktop.

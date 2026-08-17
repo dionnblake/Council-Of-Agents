@@ -114,6 +114,11 @@ const LEVEL_OPTIONS: Record<string, ModelOption[]> = {
 
 const CODEX_ULTRA_MODELS = new Set(["gpt-5.6-sol", "gpt-5.6-terra"]);
 
+function fixedLevelForModel(provider: string, model: string) {
+  if (provider !== "ANTIGRAVITY") return null;
+  return (["low", "medium", "high"] as const).find((level) => model.endsWith(`-${level}`)) ?? null;
+}
+
 function modelOptionsFor(provider: string, current: string) {
   const options = MODEL_OPTIONS[provider] ?? [];
   return current && !options.some((option) => option.value === current)
@@ -136,6 +141,8 @@ function ModelSelect(props: { provider: string; value: string; onChange: (value:
 
 function baseLevelOptionsFor(provider: string, model: string) {
   const options = LEVEL_OPTIONS[provider] ?? [];
+  const fixedLevel = fixedLevelForModel(provider, model);
+  if (fixedLevel) return options.filter((option) => option.value === fixedLevel);
   if (provider === "CODEX_WSL" && CODEX_ULTRA_MODELS.has(model)) {
     return [...options, { value: "ultra", label: "Ultra · auto-delegation" }];
   }
@@ -143,6 +150,8 @@ function baseLevelOptionsFor(provider: string, model: string) {
 }
 
 function defaultLevelFor(provider: string, model: string) {
+  const fixedLevel = fixedLevelForModel(provider, model);
+  if (fixedLevel) return fixedLevel;
   if (provider === "CODEX_WSL" && model === "gpt-5.6-sol") return "low";
   if (provider === "CODEX_WSL" && model === "gpt-5.6-terra") return "medium";
   if (provider === "CODEX_WSL") return "max";
@@ -152,7 +161,8 @@ function defaultLevelFor(provider: string, model: string) {
 
 function levelOptionsFor(provider: string, model: string, current: string) {
   const options = baseLevelOptionsFor(provider, model);
-  return current && !options.some((option) => option.value === current)
+  const fixedLevel = fixedLevelForModel(provider, model);
+  return current && !fixedLevel && !options.some((option) => option.value === current)
     ? [{ value: current, label: `${current} · saved value` }, ...options]
     : options;
 }
@@ -171,6 +181,7 @@ function LevelSelect(props: { provider: string; model: string; value: string; on
 }
 
 type TurnSummary = {
+  round: number;
   provider: string;
   state: string;
   attempts: number;
@@ -332,6 +343,7 @@ function App() {
   const [debate, setDebate] = useState<DebateSummary | null>(null);
   const [recentDebates, setRecentDebates] = useState<DebateSummary[]>([]);
   const [runSummary, setRunSummary] = useState<RunRoundSummary | null>(null);
+  const [persistedTurns, setPersistedTurns] = useState<TurnSummary[]>([]);
   const [discovery, setDiscovery] = useState<DiscoveryResult | null>(null);
   const [positions, setPositions] = useState<StoredPosition[]>([]);
   const [evidence, setEvidence] = useState<VerifiedEvidence[]>([]);
@@ -364,7 +376,7 @@ function App() {
   });
   const [levels, setLevels] = useState({
     claude: "high",
-    antigravity: "medium",
+    antigravity: "low",
     "codex-wsl": "max",
   });
   const [notice, setNotice] = useState("Runtime is in preview mode until the Tauri shell is launched.");
@@ -421,6 +433,7 @@ function App() {
         if (result.length > 0) {
           setDebate(result[0]);
           void refreshPositions(result[0].id);
+          void refreshTurnStatuses(result[0].id);
           void refreshDiscovery(result[0].id);
           void refreshSnapshotReview(result[0].id).then(() => refreshDebateSummary(result[0].id));
         }
@@ -464,6 +477,18 @@ function App() {
     }
   }
 
+  async function refreshTurnStatuses(debateId: string) {
+    if (debateId === "preview-debate") {
+      setPersistedTurns([]);
+      return;
+    }
+    try {
+      setPersistedTurns(await invoke<TurnSummary[]>("debate_turns", { debateId }));
+    } catch {
+      setPersistedTurns([]);
+    }
+  }
+
   async function refreshDiscovery(debateId: string) {
     if (debateId === "preview-debate") return;
     try {
@@ -504,8 +529,10 @@ function App() {
     setDebate(item);
     setScreen("debate");
     setRunSummary(null);
+    setPersistedTurns([]);
     setReviewResumeRound(null);
     await refreshPositions(item.id);
+    await refreshTurnStatuses(item.id);
     await refreshDiscovery(item.id);
     await refreshSnapshotReview(item.id);
     await refreshDebateSummary(item.id);
@@ -582,8 +609,10 @@ function App() {
         retryToken: retry ? crypto.randomUUID() : null,
       });
       setRunSummary(result);
+      setPersistedTurns(result.turns);
       setReviewResumeRound(null);
       await refreshPositions(debate.id);
+      await refreshTurnStatuses(debate.id);
       await refreshDiscovery(debate.id);
       setDebate((current) => current ? { ...current, state: result.state, discovery_complete: round === 0 ? result.valid_positions > 0 && result.state === "READY" : current.discovery_complete } : current);
       setNotice(result.message);
@@ -593,6 +622,7 @@ function App() {
     } catch (error) {
       const review = await refreshSnapshotReview(debate.id);
       await refreshDebateSummary(debate.id);
+      await refreshTurnStatuses(debate.id);
       if (review?.decision === "PENDING") setReviewResumeRound(round);
       setNotice(review?.decision === "PENDING"
         ? "Provider dispatch paused. Review the exact sanitized snapshot before continuing."
@@ -674,7 +704,9 @@ function App() {
       const state = await invoke<string>("resume_debate", { debateId: debate.id });
       setDebate((current) => current ? { ...current, state } : current);
       setNotice("Debate resumed. Re-dispatching the selected round with a new immutable call id.");
-      if (runSummary?.round !== undefined) await dispatchRound(runSummary.round, true);
+      if (runSummary?.round !== undefined || persistedTurns.length > 0) {
+        await dispatchRound(runSummary?.round ?? Math.max(...persistedTurns.map((turn) => turn.round)), true);
+      }
     } catch (error) {
       setNotice("Resume was not allowed: " + String(error));
     }
@@ -685,7 +717,7 @@ function App() {
       setNotice("Explain why the remaining seats are sufficient before proceeding degraded.");
       return;
     }
-    const failedProviders = (runSummary?.turns ?? [])
+    const failedProviders = (runSummary?.turns ?? persistedTurns)
       .filter((turn) => turn.failure_type || turn.state !== "VALID")
       .map((turn) => turn.provider.toLowerCase().replace("_", "-"));
     const excludedProviders = failedProviders.length > 0
@@ -703,7 +735,7 @@ function App() {
       });
       setDebate(updated);
       setNotice("Degraded council mode recorded. Excluded seats remain visible in the audit.");
-      const retryRound = runSummary?.round ?? (updated.discovery_required && !updated.discovery_complete ? 0 : 1);
+      const retryRound = runSummary?.round ?? Math.max(...persistedTurns.map((turn) => turn.round), updated.discovery_required && !updated.discovery_complete ? 0 : 1);
       await dispatchRound(retryRound, true);
     } catch (error) {
       setNotice("Degraded mode was not recorded: " + String(error));
@@ -768,7 +800,7 @@ function App() {
         <div className="content-scroll">
           {screen === "home" && <HomeScreen providers={providers} setScreen={setScreen} debate={debate} recentDebates={recentDebates} openDebate={openDebate} />}
           {screen === "new" && <LiveNewDebateScreen question={question} setQuestion={setQuestion} mode={mode} setMode={setMode} independentOnly={independentOnly} setIndependentOnly={setIndependentOnly} productType={productType} setProductType={setProductType} decisionType={decisionType} setDecisionType={setDecisionType} priority={priority} setPriority={setPriority} constraints={constraints} setConstraints={setConstraints} optionA={optionA} setOptionA={setOptionA} optionB={optionB} setOptionB={setOptionB} repository={repository} setRepository={setRepository} currentLeaning={currentLeaning} setCurrentLeaning={setCurrentLeaning} currentLeaningReason={currentLeaningReason} setCurrentLeaningReason={setCurrentLeaningReason} enabledProviders={enabledProviders} setEnabledProviders={setEnabledProviders} models={models} setModels={setModels} levels={levels} setLevels={setLevels} startDebate={startDebate} />}
-          {screen === "debate" && <LiveDebateScreen providers={providers} debate={debate} runSummary={runSummary} discovery={discovery} positions={positions} nextRound={nextRound} snapshotReview={snapshotReview} decideSnapshotReview={decideSnapshotReview} degradedRationale={degradedRationale} setDegradedRationale={setDegradedRationale} dispatchRound={dispatchRound} resumeDebate={resumeDebate} proceedDegraded={proceedDegraded} cancelDebate={cancelDebate} setScreen={setScreen} />}
+          {screen === "debate" && <LiveDebateScreen providers={providers} debate={debate} runSummary={runSummary} persistedTurns={persistedTurns} discovery={discovery} positions={positions} nextRound={nextRound} snapshotReview={snapshotReview} decideSnapshotReview={decideSnapshotReview} degradedRationale={degradedRationale} setDegradedRationale={setDegradedRationale} dispatchRound={dispatchRound} resumeDebate={resumeDebate} proceedDegraded={proceedDegraded} cancelDebate={cancelDebate} setScreen={setScreen} />}
           {screen === "decision" && <LiveDecisionScreen debate={debate} runSummary={runSummary} positions={positions} evidence={evidence} decisionRationale={decisionRationale} setDecisionRationale={setDecisionRationale} decisionKind={decisionKind} setDecisionKind={setDecisionKind} selectedOption={selectedOption} setSelectedOption={setSelectedOption} modifiedDecision={modifiedDecision} setModifiedDecision={setModifiedDecision} decisionRecord={decisionRecord} exportSummary={exportSummary} recordDecision={recordDecision} compileExport={compileExport} dispatchRound={dispatchRound} setScreen={setScreen} />}
           {screen === "export" && <ExportScreen exportSummary={exportSummary} debate={debate} />}
           {screen === "settings" && <SettingsScreen providers={providers} settingsView={settingsView} setSettingsView={setSettingsView} />}
@@ -918,6 +950,7 @@ function LiveDebateScreen(props: {
   providers: ProviderStatus[];
   debate: DebateSummary | null;
   runSummary: RunRoundSummary | null;
+  persistedTurns: TurnSummary[];
   discovery: DiscoveryResult | null;
   positions: StoredPosition[];
   nextRound: number | null;
@@ -932,12 +965,19 @@ function LiveDebateScreen(props: {
   setScreen: (screen: Screen) => void;
 }) {
   const phases = ["PREFLIGHT", "SNAPSHOT", "OPENING", "CROSS-EXAM", "FINAL POSITIONS"];
+  const visibleTurns = props.runSummary?.turns ?? props.persistedTurns;
+  const observedRound = props.runSummary?.round ?? props.persistedTurns[0]?.round;
+  const incompleteState = props.debate?.state === "FAILED" || props.debate?.state === "PAUSED";
+  const decisionSurfaceReady = props.debate?.state === "AWAITING_HUMAN_DECISION"
+    || props.debate?.state === "DECIDED"
+    || props.debate?.state === "EXPORTED";
   const phaseIndex = props.debate?.state === "DRAFT" ? 0
     : props.debate?.state === "SNAPSHOT_REVIEW_REQUIRED" ? 1
     : props.debate?.state === "OPENING" ? 2
     : props.debate?.state === "CROSS_EXAMINATION" ? 3
     : props.debate?.state === "FINAL_POSITIONS" ? 4
     : props.debate?.state === "AWAITING_HUMAN_DECISION" ? 5
+    : incompleteState ? Math.min(Math.max((observedRound ?? 0) + 1, 0), 4)
     : 0;
   const actionLabel = props.nextRound === 0 ? "Discover candidate stacks"
     : props.nextRound === 1 ? "Dispatch opening round"
@@ -964,9 +1004,9 @@ function LiveDebateScreen(props: {
       </div> : null}
       <div className="debate-layout">
         <div className="turns-panel">
-          <div className="panel-heading"><div><span className="section-kicker">TURN MONITOR</span><h2>Independent positions</h2></div><span className="count-badge">{props.runSummary ? props.runSummary.valid_positions + " / " + props.providers.length + " VALID" : props.providers.length + " SEATS"}</span></div>
+          <div className="panel-heading"><div><span className="section-kicker">TURN MONITOR</span><h2>Independent positions</h2></div><span className="count-badge">{props.runSummary ? props.runSummary.valid_positions + " / " + props.providers.length + " VALID" : visibleTurns.length > 0 ? visibleTurns.filter((turn) => turn.state === "VALID").length + " / " + props.providers.length + " VALID" : props.providers.length + " SEATS"}</span></div>
           {props.providers.map((provider, index) => {
-            const turn = props.runSummary?.turns.find((item) => item.provider === provider.provider || item.provider === provider.provider.replace("_", "-"));
+            const turn = visibleTurns.find((item) => item.provider === provider.provider || item.provider === provider.provider.replace("_", "-"));
             const state = turn?.state ?? "PENDING";
             const detail = turn ? (turn.failure_type ?? (turn.serving_identity_status === "PROVIDER_DOES_NOT_REPORT" ? "served identity not reported" : "fresh process complete")) : "fresh process · awaiting dispatch";
             return <div className={"turn-row " + (turn ? "turn-active" : "")} key={provider.provider}><div className={"turn-number " + (turn ? "on" : "")}>0{index + 1}</div><div className="turn-provider"><strong>{provider.label}</strong><span>{turn?.requested_model ?? provider.model}{turn?.requested_reasoning_effort ? ` · ${turn.requested_reasoning_effort}` : ""}</span><small>EXACT: {(turn?.exact_configuration_status ?? provider.exact_configuration_status).replaceAll("_", " ")}</small></div><div className="turn-state"><span className={"state-badge " + badgeClass(state)}><i />{state.replaceAll("_", " ")}</span><small>{detail}</small></div><div className="turn-chevron">{turn ? "✓" : "·"}</div></div>;
@@ -982,7 +1022,8 @@ function LiveDebateScreen(props: {
       </div>
       {props.discovery ? <div className="positions-strip discovery-strip"><div className="panel-heading"><div><span className="section-kicker">R0 / BOUNDED CANDIDATE UNION</span><h2>Review before independent opening</h2></div><span className="count-badge">{props.discovery.candidates.length} CANDIDATES</span></div><div className="candidate-grid">{props.discovery.candidates.map((candidate) => <article className="candidate-card" key={candidate.id}><strong>{candidate.label}</strong><span>{candidate.status_quo ? "STATUS QUO" : candidate.source}</span><p>{candidate.justifications[0] ?? "Controller-bounded candidate."}</p></article>)}</div></div> : null}
       {(props.debate?.state === "PAUSED" || (props.debate?.state === "DRAFT" && props.providers.some((provider) => provider.state === "NOT_READY"))) ? <div className="run-note degraded-note"><strong>Seat availability requires a human choice.</strong><span>Retry when ready, cancel, or explicitly continue with at least two seats.</span><div className="form-actions"><button className="outline-button" onClick={props.resumeDebate}>Retry later / resume</button><button className="secondary-button" onClick={props.cancelDebate}>Cancel debate</button></div><textarea className="text-input" value={props.degradedRationale} onChange={(event) => props.setDegradedRationale(event.target.value)} placeholder="Why is a degraded council acceptable for this decision?" rows={2} /><button className="outline-button" onClick={props.proceedDegraded}>Proceed with selected seats</button></div> : null}
-      {props.positions.length > 0 ? <div className="positions-strip"><div className="panel-heading"><div><span className="section-kicker">STORED POSITIONS</span><h2>Recommendations and risks</h2></div><span className="count-badge">{props.positions.length} PROVIDERS</span></div><div className="position-cards">{props.positions.map((position) => <article className="position-card" key={position.provider}><div className="position-card-top"><strong>{position.provider.replace("-", " ").toUpperCase()}</strong><span>{position.position.commitment.replaceAll("_", " ")}</span></div><h3>{position.position.recommendation}</h3><p>{position.position.risks[0] ?? "No risk recorded."}</p><small>{position.position.flip_condition}</small><small>MODEL: {position.requested_model} · {position.requested_reasoning_effort || "level not reported"}</small><small>EXACT CONFIG: {position.exact_configuration_status.replaceAll("_", " ")}</small></article>)}</div></div> : null}
+      {props.positions.length > 0 ? <div className="positions-strip"><div className="panel-heading"><div><span className="section-kicker">{decisionSurfaceReady ? "STORED POSITIONS" : "PARTIAL POSITIONS / NOT A DECISION"}</span><h2>{decisionSurfaceReady ? "Recommendations and risks" : "Retained provider outputs"}</h2></div><span className="count-badge">{props.positions.length} PROVIDERS</span></div>{!decisionSurfaceReady ? <p className="field-hint">These outputs were retained from an incomplete round. No final positions or human decision are available.</p> : null}<div className="position-cards">{props.positions.map((position) => <article className="position-card" key={position.provider}><div className="position-card-top"><strong>{position.provider.replace("-", " ").toUpperCase()}</strong><span>{position.position.commitment.replaceAll("_", " ")}</span></div><h3>{position.position.recommendation}</h3><p>{position.position.risks[0] ?? "No risk recorded."}</p><small>{position.position.flip_condition}</small><small>MODEL: {position.requested_model} · {position.requested_reasoning_effort || "level not reported"}</small><small>EXACT CONFIG: {position.exact_configuration_status.replaceAll("_", " ")}</small></article>)}</div></div> : null}
+      {incompleteState && !props.runSummary ? <div className="run-note degraded-note"><strong>This debate stopped before the human decision gate.</strong><span>The latest persisted round is {observedRound ?? "unknown"}; retained positions are not final and no decision was recorded.</span></div> : null}
       {props.runSummary ? <div className="run-note"><strong>{props.runSummary.message}</strong><span>round {props.runSummary.round} · {props.runSummary.valid_positions} usable positions · schema {props.runSummary.evaluation.schema_success_percent}% · citations {props.runSummary.evaluation.citation_validity} · state {props.runSummary.state}</span></div> : null}
     </section>
   );
@@ -1010,18 +1051,19 @@ function LiveDecisionScreen(props: {
 }) {
   const awaiting = props.debate?.state === "AWAITING_HUMAN_DECISION";
   const decided = Boolean(props.decisionRecord) || props.debate?.state === "DECIDED" || props.debate?.state === "EXPORTED";
+  const decisionSurfaceReady = awaiting || decided;
   return (
     <section className="page page-decision">
       <div className="eyebrow"><span className="eyebrow-line" />DECISION RECORD / HUMAN GATE</div>
       <div className="decision-header"><div><h1>Make the call<br /><em>with the dissent visible.</em></h1><p>The council can structure disagreement. Only the owner can commit the decision.</p></div><div className="decision-stamp"><span>STATUS</span><strong>{decided ? "RECORDED" : awaiting ? "AWAITING" : "NOT READY"}</strong><small>HUMAN DECISION</small></div></div>
       <div className="decision-grid">
         <div className="recommendation-panel">
-          <div className="panel-heading"><div><span className="section-kicker">COUNCIL SYNTHESIS</span><h2>Recommendation surface</h2></div><span className="confidence-tag">{props.runSummary?.valid_positions ?? 0} POSITIONS</span></div>
-          <div className="recommendation-copy"><span className="recommendation-label">PERSISTED EVIDENCE</span><h3>{props.positions[0]?.position.recommendation ?? (props.runSummary ? "The final positions are stored in the local audit record." : "No live positions are available yet.")}</h3><p>{props.positions.length > 0 ? "The controller retains each seat's recommendation, commitment, risks, flip condition, and claim citations. Review the full audit record before deciding." : props.runSummary ? "Review provider rows, risks, commitments, and citations in the audit trail before making a human decision. This screen does not grant majority authority to any seat." : "Complete the three controlled rounds before opening the decision gate."}</p></div>
+          <div className="panel-heading"><div><span className="section-kicker">COUNCIL SYNTHESIS</span><h2>Recommendation surface</h2></div><span className="confidence-tag">{decisionSurfaceReady ? props.positions.length : props.positions.length + " RETAINED / NOT FINAL"} {decisionSurfaceReady ? "POSITIONS" : ""}</span></div>
+          <div className="recommendation-copy"><span className="recommendation-label">{decisionSurfaceReady ? "PERSISTED EVIDENCE" : "DECISION GATE BLOCKED"}</span><h3>{decisionSurfaceReady ? (props.positions[0]?.position.recommendation ?? (props.runSummary ? "The final positions are stored in the local audit record." : "No final positions are available yet.")) : "No final positions are available yet."}</h3><p>{decisionSurfaceReady ? (props.positions.length > 0 ? "The controller retains each seat's recommendation, commitment, risks, flip condition, and claim citations. Review the full audit record before deciding." : "Review provider rows, risks, commitments, and citations in the audit trail before making a human decision. This screen does not grant majority authority to any seat.") : props.positions.length > 0 ? "The last round stopped before final positions. Retained provider outputs are not a decision and cannot open the human gate." : "Complete opening, cross-examination, and final positions before opening the decision gate."}</p></div>
           <div className="evidence-strip"><span>↗</span><div><strong>{props.evidence.filter((item) => item.verdict !== "UNVERIFIED").length} verified citations</strong><small>{props.evidence.filter((item) => item.verdict === "UNVERIFIED").length} unverified · {props.runSummary?.valid_positions ?? 0} usable positions</small></div></div>
           {props.evidence.length > 0 ? <div className="evidence-list">{props.evidence.slice(-8).map((item, index) => <details key={`${item.requested_range}-${index}`}><summary>{item.requested_range} · {item.verdict.replaceAll("_", " ")}</summary><code>{item.resolved_range ?? "No valid range resolved"}</code><pre>{item.content || "No excerpt stored."}</pre></details>)}</div> : <p className="field-hint">No citation verification records are stored yet. Greenfield claims remain unverified until a snapshot exists.</p>}
         </div>
-        <aside className="dissent-panel"><span className="section-kicker">MINORITY REPORT</span><h2>Dissent stays in the record.</h2><div className="dissent-quote">{props.positions[1]?.position.recommendation ?? "No recommendation becomes authority by being the majority. The final record keeps every usable seat and its stated limits."}</div><div className="dissent-source"><span className="provider-glyph glyph-antigravity">A</span><div><strong>{props.positions[1]?.provider.replace("-", " ").toUpperCase() ?? "ALL SEATS REMAIN ATTRIBUTABLE"}</strong><small>REQUESTED / SERVED STATUS VISIBLE</small></div></div></aside>
+        <aside className="dissent-panel"><span className="section-kicker">MINORITY REPORT</span><h2>Dissent stays in the record.</h2><div className="dissent-quote">{decisionSurfaceReady ? (props.positions[1]?.position.recommendation ?? "No recommendation becomes authority by being the majority. The final record keeps every usable seat and its stated limits.") : "No dissent report is final until all controlled rounds complete."}</div><div className="dissent-source"><span className="provider-glyph glyph-antigravity">A</span><div><strong>{decisionSurfaceReady && props.positions[1] ? props.positions[1].provider.replace("-", " ").toUpperCase() : "ALL SEATS REMAIN ATTRIBUTABLE"}</strong><small>REQUESTED / SERVED STATUS VISIBLE</small></div></div></aside>
       </div>
       <div className="human-gate-panel">
           <div><span className="section-kicker">YOUR DECISION</span><h2>What are you committing to?</h2><select className="text-input" value={props.decisionKind} onChange={(event) => props.setDecisionKind(event.target.value)}><option value="APPROVE_OPTION">Approve an option</option><option value="APPROVE_MODIFIED_DECISION">Approve a modified decision</option><option value="CHALLENGE_CONSENSUS">Challenge the consensus</option><option value="REJECT_ALL">Reject all positions</option></select>{props.decisionKind === "APPROVE_OPTION" ? <input className="text-input decision-option" value={props.selectedOption} onChange={(event) => props.setSelectedOption(event.target.value)} placeholder="Selected option (required)" /> : null}{props.decisionKind === "APPROVE_MODIFIED_DECISION" ? <input className="text-input decision-option" value={props.modifiedDecision} onChange={(event) => props.setModifiedDecision(event.target.value)} placeholder="Modified decision (required)" /> : null}<textarea className="text-input decision-rationale" value={props.decisionRationale} onChange={(event) => props.setDecisionRationale(event.target.value)} placeholder="State the decision, the rationale, and what evidence would make you revisit it." rows={4} /></div>

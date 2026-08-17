@@ -18,6 +18,8 @@ Own the Rust workspace packages for Council of Agents.
 - A secret-looking snapshot exclusion enters the persisted `SNAPSHOT_REVIEW_REQUIRED` state. Review records bind the debate to the snapshot ID, manifest hash, exclusion-set hash, sanitized metadata, and source fingerprint; approval is explicit and stale source contents invalidate it.
 - Repair policies and certification limitations are explicit data, not inferred from success.
 - Provider model levels are provider-specific, validated against supported effort values, persisted with migration-safe defaults, and applied in each provider command without changing subscription routing.
+- Antigravity model identifiers with embedded `-low`, `-medium`, or `-high` levels must be paired with that exact level, and the command must omit a conflicting `--effort` flag.
+- Persisted latest-round turn statuses must remain queryable after reload so failed or partial provider rounds cannot appear complete.
 - Changes to persisted schema require a migration-safe initialization path and tests.
 
 ## Verification

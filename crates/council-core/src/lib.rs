@@ -33,7 +33,7 @@ pub use orchestration::{
     LiveProviderExecutor, RoundRequest, TurnRecord, extract_position_value,
 };
 pub use packet::{ContextPacket, PacketMetadata};
-pub use persistence::Database;
+pub use persistence::{Database, PersistedTurnStatus};
 pub use providers::{
     CommandSpec, ProviderCallRequest, ProviderRegistry, RepairPolicy, billing_environment_status,
     ensure_subscription_environment,

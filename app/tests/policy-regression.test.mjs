@@ -46,6 +46,15 @@ test("incomplete or failed runs remain visibly blocked at the human gate", () =>
   assert.match(liveDecisionScreen, /unverified/);
 });
 
+test("reloaded failed rounds show persisted seat failures and never present partial positions as a decision", () => {
+  assert.match(appSource, /invoke<TurnSummary\[\]>,?\s*\("debate_turns"/);
+  assert.match(appSource, /persistedTurns/);
+  assert.match(liveDebateScreen, /PARTIAL POSITIONS \/ NOT A DECISION/);
+  assert.match(liveDebateScreen, /latest persisted round/);
+  assert.match(liveDecisionScreen, /DECISION GATE BLOCKED/);
+  assert.match(liveDecisionScreen, /Retained provider outputs are not a decision/);
+});
+
 test("degraded mode requires explicit human action and exposes recovery controls", () => {
   assert.match(liveDebateScreen, /Seat availability requires a human choice/);
   assert.match(liveDebateScreen, /Retry later \/ resume/);
@@ -90,6 +99,8 @@ test("model controls expose provider-specific dropdown choices", () => {
   assert.match(appSource, /Ultra · auto-delegation/);
   assert.match(appSource, /gemini-3\.7-flash-high/);
   assert.match(appSource, /gpt-5\.6-terra/);
+  assert.match(appSource, /function fixedLevelForModel/);
+  assert.match(appSource, /antigravity: "low"/);
 });
 
 test("secret snapshot review is persisted, exact, and human-controlled", () => {

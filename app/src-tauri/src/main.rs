@@ -5,9 +5,9 @@ use council_core::{
     CERTIFICATION_BOUNDARY_VERSION, ContextPacket, CouncilOrchestrator, Database, Debate,
     DebateEvent, DebateState, DecisionRecord, EvaluationMetrics, EvidenceIndex,
     ExactConfigurationStatus, FailureType, HumanDecision, HumanDecisionKind, Intake,
-    LiveProviderExecutor, ModelSelection, POSITION_SCHEMA_VERSION, ProviderCallRequest,
-    ProviderConfig, ProviderKind, ProviderPosition, ProviderRegistry, RoundRequest,
-    ServingIdentityStatus, SnapshotBuilder, SnapshotManifest, SnapshotRequest,
+    LiveProviderExecutor, ModelSelection, POSITION_SCHEMA_VERSION, PersistedTurnStatus,
+    ProviderCallRequest, ProviderConfig, ProviderKind, ProviderPosition, ProviderRegistry,
+    RoundRequest, ServingIdentityStatus, SnapshotBuilder, SnapshotManifest, SnapshotRequest,
     SnapshotReviewDecision, SnapshotReviewExclusion, SnapshotReviewRecord, TurnState,
     VerifiedEvidence, WslBridgeRequest, build_r0_candidate_union, build_wsl_bridge_plan,
     compile_decision_record, compile_master_prompt, content_hash, deterministic_call_id,
@@ -76,6 +76,7 @@ struct ExportSummary {
 
 #[derive(Debug, Clone, Serialize)]
 struct TurnSummary {
+    round: u8,
     provider: ProviderKind,
     state: TurnState,
     attempts: usize,
@@ -1492,6 +1493,36 @@ fn debate_positions(
 }
 
 #[tauri::command]
+fn debate_turns(app: tauri::AppHandle, debate_id: String) -> Result<Vec<TurnSummary>, String> {
+    database_for(&app)?
+        .latest_turn_statuses(&debate_id)
+        .map(|turns| {
+            turns
+                .into_iter()
+                .map(turn_summary_from_persistence)
+                .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn turn_summary_from_persistence(turn: PersistedTurnStatus) -> TurnSummary {
+    TurnSummary {
+        round: turn.round,
+        provider: turn.provider,
+        state: turn.state,
+        attempts: turn.attempts,
+        failure_type: turn.failure_type,
+        requested_model: turn.requested_model,
+        requested_reasoning_effort: turn.requested_reasoning_effort,
+        reported_served_model: turn.reported_served_model,
+        serving_identity_status: turn.serving_identity_status,
+        exact_configuration_status: turn.exact_configuration_status,
+        exact_configuration_evidence: turn.exact_configuration_evidence,
+        certification_boundary: turn.certification_boundary,
+    }
+}
+
+#[tauri::command]
 fn debate_evidence(
     app: tauri::AppHandle,
     debate_id: String,
@@ -2329,6 +2360,7 @@ fn run_discovery_round(
                 )
             });
             TurnSummary {
+                round: 0,
                 provider: turn.provider.clone(),
                 state: turn.state.clone(),
                 attempts: turn.attempts.len(),
@@ -3263,6 +3295,7 @@ fn run_round(
                 )
             });
             TurnSummary {
+                round: turn.round,
                 provider: turn.provider.clone(),
                 state: turn.state.clone(),
                 attempts: turn.attempts.len(),
@@ -3616,6 +3649,7 @@ fn main() {
             resume_debate,
             recent_debates,
             debate_positions,
+            debate_turns,
             debate_evidence,
             debate_evaluation,
             debate_discovery,

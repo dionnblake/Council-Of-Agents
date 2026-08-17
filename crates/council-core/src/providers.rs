@@ -6,7 +6,8 @@ use thiserror::Error;
 
 use crate::model::{
     CERTIFICATION_BOUNDARY_VERSION, ExactConfigurationStatus, FailureType, ProviderConfig,
-    ProviderKind, ServingIdentityStatus, supported_reasoning_efforts_for_model,
+    ProviderKind, ServingIdentityStatus, fixed_reasoning_effort_for_model,
+    supported_reasoning_efforts_for_model,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -304,6 +305,17 @@ pub fn validate_reasoning_effort(
     model: &str,
     reasoning_effort: &str,
 ) -> Result<(), ProviderError> {
+    if let Some(fixed_effort) = fixed_reasoning_effort_for_model(provider, model)
+        && reasoning_effort != fixed_effort
+    {
+        return Err(ProviderError::InvalidConfiguration(format!(
+            "{} model {} fixes reasoning level {}; choose {} or another model",
+            provider.slug(),
+            model,
+            fixed_effort,
+            fixed_effort
+        )));
+    }
     if supported_reasoning_efforts_for_model(provider, model).contains(&reasoning_effort) {
         Ok(())
     } else {
@@ -529,8 +541,6 @@ fn build_antigravity_command(
         request.prompt.clone(),
         "--model".to_string(),
         request.model.clone(),
-        "--effort".to_string(),
-        request.reasoning_effort.clone(),
         "--output-format".to_string(),
         "json".to_string(),
         "--json-schema".to_string(),
@@ -538,6 +548,12 @@ fn build_antigravity_command(
         "--add-dir".to_string(),
         request.packet_directory.to_string_lossy().to_string(),
     ];
+    if fixed_reasoning_effort_for_model(&ProviderKind::Antigravity, &request.model).is_none() {
+        args.splice(
+            4..4,
+            ["--effort".to_string(), request.reasoning_effort.clone()],
+        );
+    }
     if let Some(snapshot_path) = request.snapshot_path.as_deref() {
         args.push("--add-dir".to_string());
         args.push(snapshot_path.to_string_lossy().to_string());
@@ -888,8 +904,12 @@ mod tests {
         validate_reasoning_effort(&ProviderKind::Claude, "sonnet", "max").unwrap();
         validate_reasoning_effort(&ProviderKind::CodexWsl, "gpt-5.6-luna", "xhigh").unwrap();
         validate_reasoning_effort(&ProviderKind::CodexWsl, "gpt-5.6-sol", "ultra").unwrap();
-        validate_reasoning_effort(&ProviderKind::Antigravity, "gemini-3.7-flash-low", "high")
+        validate_reasoning_effort(&ProviderKind::Antigravity, "gemini-3.7-flash-low", "low")
             .unwrap();
+        assert!(
+            validate_reasoning_effort(&ProviderKind::Antigravity, "gemini-3.7-flash-low", "high")
+                .is_err()
+        );
         assert!(
             validate_reasoning_effort(&ProviderKind::CodexWsl, "gpt-5.6-luna", "ultra").is_err()
         );
@@ -898,6 +918,41 @@ mod tests {
                 .is_err()
         );
         assert!(validate_reasoning_effort(&ProviderKind::Claude, "sonnet", "unlimited").is_err());
+    }
+
+    #[test]
+    fn antigravity_fixed_effort_models_do_not_receive_a_conflicting_effort_flag() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let mut request = ProviderCallRequest {
+            provider: ProviderKind::Antigravity,
+            model: "gemini-3.7-flash-low".to_string(),
+            reasoning_effort: "low".to_string(),
+            turn_id: None,
+            packet_path: tempdir.path().join("packet.md"),
+            packet_directory: tempdir.path().to_path_buf(),
+            schema_path: tempdir.path().join("schema.json"),
+            working_directory: tempdir.path().to_path_buf(),
+            scratch_directory: tempdir.path().to_path_buf(),
+            prompt: "Read the immutable packet at packet.md".to_string(),
+            timeout_ms: 180_000,
+            linux_packet_path: None,
+            linux_working_directory: None,
+            linux_schema_path: None,
+            snapshot_path: None,
+            linux_snapshot_path: None,
+            snapshot_manifest_hash: None,
+        };
+        let command = ProviderRegistry::defaults()
+            .build_command(&request)
+            .unwrap();
+        assert!(!command.args.contains(&"--effort".to_string()));
+
+        request.model = "gemini-3.7-flash-medium".to_string();
+        request.reasoning_effort = "medium".to_string();
+        let command = ProviderRegistry::defaults()
+            .build_command(&request)
+            .unwrap();
+        assert!(!command.args.contains(&"--effort".to_string()));
     }
 
     #[test]

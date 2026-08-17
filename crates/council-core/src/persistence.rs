@@ -7,8 +7,8 @@ use thiserror::Error;
 
 use crate::evidence::VerifiedEvidence;
 use crate::model::{
-    Debate, DebateState, DecisionRecord, ModelSelection, ProviderConfig, ProviderKind,
-    ProviderPosition, ServingIdentityStatus, TurnState, new_id,
+    Debate, DebateState, DecisionRecord, ExactConfigurationStatus, FailureType, ModelSelection,
+    ProviderConfig, ProviderKind, ProviderPosition, ServingIdentityStatus, TurnState, new_id,
 };
 use crate::packet::WrittenPacket;
 use crate::providers::ProviderCallResult;
@@ -33,6 +33,22 @@ pub enum DatabaseError {
 
 pub struct Database {
     connection: Connection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedTurnStatus {
+    pub round: u8,
+    pub provider: ProviderKind,
+    pub state: TurnState,
+    pub attempts: usize,
+    pub failure_type: Option<FailureType>,
+    pub requested_model: String,
+    pub requested_reasoning_effort: String,
+    pub reported_served_model: Option<String>,
+    pub serving_identity_status: ServingIdentityStatus,
+    pub exact_configuration_status: ExactConfigurationStatus,
+    pub exact_configuration_evidence: Option<String>,
+    pub certification_boundary: String,
 }
 
 impl Database {
@@ -454,6 +470,91 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn latest_turn_statuses(
+        &self,
+        debate_id: &str,
+    ) -> Result<Vec<PersistedTurnStatus>, DatabaseError> {
+        let latest_round: Option<u8> = self.connection.query_row(
+            "SELECT MAX(round) FROM turns WHERE debate_id = ?1",
+            params![debate_id],
+            |row| row.get(0),
+        )?;
+        let Some(latest_round) = latest_round else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self.connection.prepare(
+            "SELECT t.round, t.provider_slug, t.state, COUNT(a.id),
+                    (SELECT a2.failure_type FROM attempts a2
+                     WHERE a2.turn_id = t.id
+                     ORDER BY a2.attempt_number DESC, a2.created_at DESC LIMIT 1),
+                    t.requested_model, t.requested_reasoning_effort,
+                    t.exact_configuration_status, t.exact_configuration_evidence,
+                    t.certification_boundary, t.reported_served_model,
+                    t.serving_identity_status
+             FROM turns t
+             LEFT JOIN attempts a ON a.turn_id = t.id
+             WHERE t.debate_id = ?1 AND t.round = ?2
+             GROUP BY t.id
+             ORDER BY t.provider_slug",
+        )?;
+        let rows = statement.query_map(params![debate_id, latest_round], |row| {
+            Ok((
+                row.get::<_, u8>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, String>(11)?,
+            ))
+        })?;
+        let mut statuses = Vec::new();
+        for row in rows {
+            let (
+                round,
+                provider_slug,
+                state,
+                attempts,
+                failure_type,
+                requested_model,
+                requested_reasoning_effort,
+                exact_configuration_status,
+                exact_configuration_evidence,
+                certification_boundary,
+                reported_served_model,
+                serving_identity_status,
+            ) = row?;
+            let Some(provider) = ProviderKind::from_slug(&provider_slug) else {
+                continue;
+            };
+            statuses.push(PersistedTurnStatus {
+                round,
+                provider,
+                state: serde_json::from_str(&state)?,
+                attempts: usize::try_from(attempts).map_err(|_| {
+                    DatabaseError::Conflict(format!("invalid attempt count for {provider_slug}"))
+                })?,
+                failure_type: failure_type
+                    .as_deref()
+                    .map(serde_json::from_str)
+                    .transpose()?,
+                requested_model,
+                requested_reasoning_effort,
+                reported_served_model,
+                serving_identity_status: serde_json::from_str(&serving_identity_status)?,
+                exact_configuration_status: serde_json::from_str(&exact_configuration_status)?,
+                exact_configuration_evidence,
+                certification_boundary,
+            });
+        }
+        Ok(statuses)
     }
 
     pub fn save_provider_position(
@@ -1565,8 +1666,8 @@ mod tests {
     use super::*;
     use crate::model::{
         CERTIFICATION_BOUNDARY_VERSION, Claim, Commitment, Debate, ExactConfigurationStatus,
-        Intake, ModelSelection, PeerResponse, PeerResponseClassification, Position, ProviderKind,
-        Reversibility,
+        FailureType, Intake, ModelSelection, PeerResponse, PeerResponseClassification, Position,
+        ProviderConfig, ProviderKind, Reversibility, TurnState,
     };
     use crate::snapshot::{
         SnapshotBuilder, SnapshotRequest, SnapshotReviewDecision,
@@ -1899,6 +2000,84 @@ mod tests {
             loaded[0].certification_boundary,
             CERTIFICATION_BOUNDARY_VERSION
         );
+    }
+
+    #[test]
+    fn latest_turn_statuses_preserve_failed_round_seats_for_reload() {
+        let database = Database::in_memory().unwrap();
+        let models = BTreeMap::from([
+            (
+                ProviderKind::Claude,
+                ModelSelection::requested_with_effort_for(
+                    &ProviderKind::Claude,
+                    "claude-haiku-4-5-20251001",
+                    "high",
+                ),
+            ),
+            (
+                ProviderKind::Antigravity,
+                ModelSelection::requested_with_effort_for(
+                    &ProviderKind::Antigravity,
+                    "gemini-3.7-flash-low",
+                    "low",
+                ),
+            ),
+        ]);
+        let debate = Debate::new(Intake::default(), models);
+        database.create_debate(&debate).unwrap();
+        let configs = ProviderConfig::defaults();
+        let claude = configs
+            .iter()
+            .find(|config| config.provider == ProviderKind::Claude)
+            .unwrap();
+        let antigravity = configs
+            .iter()
+            .find(|config| config.provider == ProviderKind::Antigravity)
+            .unwrap();
+        database
+            .create_turn(
+                "turn-claude-reload",
+                &debate.id,
+                1,
+                claude,
+                TurnState::Valid,
+                None,
+            )
+            .unwrap();
+        database
+            .create_turn(
+                "turn-antigravity-reload",
+                &debate.id,
+                1,
+                antigravity,
+                TurnState::Failed,
+                None,
+            )
+            .unwrap();
+        let failure = FailureType::ProcessError;
+        database
+            .save_attempt(
+                "attempt-antigravity-reload",
+                "turn-antigravity-reload",
+                1,
+                TurnState::Failed,
+                Some(&failure),
+                None,
+            )
+            .unwrap();
+
+        let statuses = database.latest_turn_statuses(&debate.id).unwrap();
+        assert_eq!(statuses.len(), 2);
+        let antigravity_status = statuses
+            .iter()
+            .find(|status| status.provider == ProviderKind::Antigravity)
+            .unwrap();
+        assert_eq!(antigravity_status.round, 1);
+        assert_eq!(antigravity_status.state, TurnState::Failed);
+        assert_eq!(antigravity_status.attempts, 1);
+        assert_eq!(antigravity_status.failure_type, Some(failure));
+        assert_eq!(antigravity_status.requested_model, "gemini-3.7-flash-low");
+        assert_eq!(antigravity_status.requested_reasoning_effort, "low");
     }
 
     #[test]

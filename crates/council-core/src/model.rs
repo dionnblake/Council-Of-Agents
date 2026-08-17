@@ -65,6 +65,9 @@ impl ProviderKind {
 
 pub const CLAUDE_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 pub const ANTIGRAVITY_REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+const ANTIGRAVITY_LOW_ONLY: &[&str] = &["low"];
+const ANTIGRAVITY_MEDIUM_ONLY: &[&str] = &["medium"];
+const ANTIGRAVITY_HIGH_ONLY: &[&str] = &["high"];
 pub const CODEX_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 pub const CODEX_EXTENDED_REASONING_EFFORTS: &[&str] =
     &["low", "medium", "high", "xhigh", "max", "ultra"];
@@ -81,13 +84,29 @@ pub fn supported_reasoning_efforts_for_model(
     provider: &ProviderKind,
     model: &str,
 ) -> &'static [&'static str] {
-    if matches!(provider, ProviderKind::CodexWsl)
-        && matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra")
-    {
-        CODEX_EXTENDED_REASONING_EFFORTS
-    } else {
-        supported_reasoning_efforts(provider)
+    match fixed_reasoning_effort_for_model(provider, model) {
+        Some("low") => ANTIGRAVITY_LOW_ONLY,
+        Some("medium") => ANTIGRAVITY_MEDIUM_ONLY,
+        Some("high") => ANTIGRAVITY_HIGH_ONLY,
+        _ if matches!(provider, ProviderKind::CodexWsl)
+            && matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra") =>
+        {
+            CODEX_EXTENDED_REASONING_EFFORTS
+        }
+        _ => supported_reasoning_efforts(provider),
     }
+}
+
+pub fn fixed_reasoning_effort_for_model(
+    provider: &ProviderKind,
+    model: &str,
+) -> Option<&'static str> {
+    if !matches!(provider, ProviderKind::Antigravity) {
+        return None;
+    }
+    ["low", "medium", "high"]
+        .into_iter()
+        .find(|effort| model.ends_with(&format!("-{effort}")))
 }
 
 pub fn default_reasoning_effort(provider: &ProviderKind) -> &'static str {
@@ -99,6 +118,9 @@ pub fn default_reasoning_effort(provider: &ProviderKind) -> &'static str {
 }
 
 pub fn default_reasoning_effort_for_model(provider: &ProviderKind, model: &str) -> &'static str {
+    if let Some(effort) = fixed_reasoning_effort_for_model(provider, model) {
+        return effort;
+    }
     match (provider, model) {
         (ProviderKind::CodexWsl, "gpt-5.6-sol") => "low",
         (ProviderKind::CodexWsl, "gpt-5.6-terra") => "medium",
@@ -385,7 +407,11 @@ pub struct ProviderConfig {
 
 impl ProviderConfig {
     pub fn normalize_defaults(&mut self) {
-        if self.reasoning_effort_default.trim().is_empty() {
+        if let Some(fixed_effort) =
+            fixed_reasoning_effort_for_model(&self.provider, &self.model_default)
+        {
+            self.reasoning_effort_default = fixed_effort.to_string();
+        } else if self.reasoning_effort_default.trim().is_empty() {
             self.reasoning_effort_default =
                 default_reasoning_effort_for_model(&self.provider, &self.model_default).to_string();
         }
@@ -419,7 +445,7 @@ impl ProviderConfig {
                 provider: ProviderKind::Antigravity,
                 executable: PathBuf::from("agy.exe"),
                 model_default: "gemini-3.7-flash-low".to_string(),
-                reasoning_effort_default: "medium".to_string(),
+                reasoning_effort_default: "low".to_string(),
                 enabled: true,
                 timeout_ms: 180_000,
                 config_dir: None,
@@ -709,6 +735,24 @@ mod tests {
         assert_eq!(
             selection.certification_boundary,
             CERTIFICATION_BOUNDARY_VERSION
+        );
+    }
+
+    #[test]
+    fn antigravity_fixed_model_normalizes_to_its_embedded_level() {
+        let mut config = ProviderConfig::defaults()
+            .into_iter()
+            .find(|config| config.provider == ProviderKind::Antigravity)
+            .unwrap();
+        config.reasoning_effort_default = "medium".to_string();
+        config.normalize_defaults();
+        assert_eq!(config.reasoning_effort_default, "low");
+        assert_eq!(
+            supported_reasoning_efforts_for_model(
+                &ProviderKind::Antigravity,
+                "gemini-3.7-flash-low"
+            ),
+            &["low"]
         );
     }
 }
