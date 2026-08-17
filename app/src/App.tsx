@@ -582,6 +582,18 @@ function App() {
       setNotice("Select two or three provider seats explicitly before opening the debate.");
       return;
     }
+    setRunSummary(null);
+    setPersistedTurns([]);
+    setPositions([]);
+    setEvidence([]);
+    setDecisionRecord(null);
+    setDecisionRationale("");
+    setDecisionKind("APPROVE_OPTION");
+    setSelectedOption("");
+    setModifiedDecision("");
+    setDegradedRationale("");
+    setExportSummary(null);
+    setReviewResumeRound(null);
     try {
       const created = await invoke<DebateSummary>("create_debate", { intake, modelOverrides: models, reasoningEffortOverrides: levels, independentOnly, enabledProviders });
       setDebate(created);

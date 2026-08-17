@@ -470,7 +470,7 @@ impl ProviderConfig {
                 model_default: "gpt-5.6-luna".to_string(),
                 reasoning_effort_default: "max".to_string(),
                 enabled: true,
-                timeout_ms: 180_000,
+                timeout_ms: 300_000,
                 config_dir: None,
                 safety_config_path: None,
                 wsl_distribution: Some("CouncilCodexWSL".to_string()),

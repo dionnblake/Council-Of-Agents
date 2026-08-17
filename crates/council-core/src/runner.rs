@@ -78,6 +78,7 @@ impl ProcessRunner {
         let stdout_handle = spawn_reader(child.stdout.take());
         let stderr_handle = spawn_reader(child.stderr.take());
         let mut timed_out = false;
+        let mut cancellation_fallback_ran = false;
         let exit_code = loop {
             if let Some(status) = child.try_wait()? {
                 break status.code();
@@ -85,6 +86,11 @@ impl ProcessRunner {
             if started.elapsed() >= Duration::from_millis(specification.timeout_ms) {
                 timed_out = true;
                 thread::sleep(self.timeout_grace);
+                cancellation_fallback_ran = specification
+                    .kill_fallback
+                    .as_ref()
+                    .map(run_cancellation_fallback)
+                    .unwrap_or(false);
                 if child.try_wait()?.is_none() {
                     child.kill()?;
                 }
@@ -99,12 +105,6 @@ impl ProcessRunner {
         let stderr = stderr_handle
             .join()
             .map_err(|_| ProcessRunnerError::OutputReader)??;
-        let cancellation_fallback_ran = timed_out
-            && specification
-                .kill_fallback
-                .as_ref()
-                .map(run_cancellation_fallback)
-                .unwrap_or(false);
 
         Ok(ProcessResult {
             exit_code,
