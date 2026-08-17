@@ -54,6 +54,8 @@ packet = /home/council/council/packet/...
 
 The provider registry builds commands from typed configuration. React never spawns a provider process and never accepts a raw shell command.
 
+Model selection is also typed and provider-specific. Each debate records the requested provider, model, reasoning level, served identity status, exact-configuration status/evidence, and `council-provider-boundary.v1`. Provider-level certification never promotes an unrecorded model/level tuple to exact certification. Antigravity model identifiers with embedded `-low`, `-medium`, or `-high` levels are paired with that fixed level and do not receive a conflicting generic effort flag.
+
 ## Billing and credentials
 
 The controller builds each provider command from an explicit host-environment allowlist and then clears the child environment before applying that command spec. Ambient host credentials are not inherited by Claude, Antigravity, or Codex WSL. Configured API keys, custom provider URLs, alternate routing variables, and prohibited routing arguments are rejected at settings and command-construction boundaries. It does not print their values. Council execution is account-based subscription authentication only.
@@ -64,6 +66,7 @@ The controller builds each provider command from an explicit host-environment al
 - Claude and Codex use validation plus quarantine with no automatic repair.
 - Antigravity is allowed one repair attempt because that is the certified seat policy.
 - An incomplete three-seat round is quarantined and cannot advance the debate.
+- Reloaded failed or partial rounds remain visible as partial output and cannot be presented as final decision positions.
 - A targeted round is human-requested and capped at one.
 - If a seat is unavailable, the human may explicitly proceed with at least two remaining seats and a persisted rationale; the controller never silently shrinks the council.
 - Independent-only evaluation stops after the opening positions and records deterministic evaluation metrics without treating the result as a production council decision.
@@ -77,6 +80,6 @@ Provider output is advisory. Majority is not authority. The human decision is re
 
 The repository contains durable individual-seat evidence for Claude, Antigravity, and Codex WSL, plus implementation and automated checks for the controller boundary. That evidence does not substantiate a current Tauri three-seat debate through R1, R2, R3, human decision, and local export.
 
-The current installed-app certification run created debate `debate-795181f0-43db-42c9-97ff-0af9b14fb9f0`, showed the unavailable-seat recovery/degraded controls, persisted cancellation, and verified restart/reinstall persistence. The corrected native repository-grounded candidate created debate `debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb`, persisted the exact review gate for snapshot `snapshot-debate-5003e0d6-4635-46d4-a3d4-ddddab6690eb`, and is waiting for owner approval before provider dispatch. Current-host live positions, citation attachment, decision, export, provider-process cancellation, and interrupted-dispatch recovery remain unverified. The exact gate classifications and hashes are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
+The current source checkpoint is `bbf339df4942ad95a433f2b8e3cc978ac4ca34f6`. The exact NSIS candidate was installed, launched, relaunched, and uninstalled successfully; app data remained after uninstall. The previous snapshot-review record was created before the current model/configuration hardening and is stale, so it is not an approval for this source. No fresh current-head debate, provider process, human decision, export, provider-process cancellation, or interrupted-dispatch recovery was claimed. The exact gate classifications and artifact hash are recorded in [V1-PRODUCTION-CERTIFICATION.md](../evidence/V1-PRODUCTION-CERTIFICATION.md).
 
 Accordingly, the current product status is `RELEASE_CANDIDATE`, not `PRODUCTION_CERTIFIED`. V1 continues to perform preflight, keep unavailable seats visible, and require an explicit degraded-mode choice before continuing.

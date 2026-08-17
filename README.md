@@ -19,7 +19,7 @@ QUESTION
 
 ## Current build
 
-V1 is currently a `RELEASE_CANDIDATE`, not production-certified. The installer, local persisted-debate path, and explicit persisted snapshot-review gate are tested. A current-host authenticated three-seat R1/R2/R3 run, human decision, export, and live provider cancellation/recovery remain unverified. M1 has not started. See [the V1 production certification record](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
+The current implementation build is `bbf339df4942ad95a433f2b8e3cc978ac4ca34f6`. V1 remains a `RELEASE_CANDIDATE`, not production-certified. Automated verification, the exact model/level persistence path, and the NSIS install/relaunch/uninstall lifecycle pass. A fresh current-head snapshot review, authenticated three-seat R1/R2/R3 run, human decision, export, and live provider cancellation/recovery remain unverified. M1 has not started. See [the V1 production certification record](docs/evidence/V1-PRODUCTION-CERTIFICATION.md).
 
 The V1 implementation now includes:
 
@@ -31,10 +31,20 @@ The V1 implementation now includes:
 - fresh-process provider command contracts for Claude, Antigravity, and Codex WSL;
 - SQLite persistence for debates, turns, attempts, raw artifacts, positions, packets, snapshots, decisions, exports, safety events, and a hash-chained append-only audit log;
 - a Tauri 2 command bridge and React command center for intake, R0 bounded stack discovery, explicit round dispatch, turn visibility, recovery/degraded-seat choices, evidence review, human decision, and local deterministic export;
+- provider-specific model and reasoning-level dropdowns, exact requested provider/model/level persistence, fail-closed exact-configuration status, and visible requested-versus-served identity details;
+- migration-safe reload of the latest persisted turn statuses, including failed or partial seats that must never be presented as final decision positions;
 - independent-only evaluation mode with deterministic citation/schema/repair/wall-time/peer-response/revision metrics, without silently treating a reduced council as a production result;
 - exactly five top-level reasoning-only V1 skill packages.
 
 Provider execution is opt-in from the desktop round controls. A live three-seat call is not run during ordinary builds or tests.
+
+The current NSIS candidate was built from the pushed source with Tauri CLI 2.5.0:
+
+~~~text
+PATH = C:\council-target\release\bundle\nsis\Council of Agents_0.1.0_x64-setup.exe
+SIZE = 3,491,307 bytes
+SHA256 = D20BCBD83AFC910829A55D7743559862C933B241123B8B951FD2D6248A0B7F56
+~~~
 
 ## Safety boundaries
 
